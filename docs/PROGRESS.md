@@ -173,5 +173,32 @@
 ### 下一步
 1. 全部门禁（lint/typecheck/test:unit/test:e2e/build）→ 本地 commit M4（不 push）
 2. 进入 M5（F09 快捷键/命令面板/无障碍/手机查看/Service Worker 离线）
-## M5 完整产品体验（未开始）
+## M5 完整产品体验（进行中，2026-10-02）
+
+### 目标（F09 离线、部署更新与交互质量）
+- 命令面板（Ctrl+K 模糊搜索执行命令）、快捷键体系（Ctrl+Enter 运行、? 帮助）
+- 无障碍：dialog/listbox ARIA、运行状态 live region、跳到画布链接
+- 手机查看模式：≤900px 堆叠布局
+- Service Worker：离线缓存 + 新版本更新提示横幅
+
+### 实现
+- `src/components/CommandPalette.tsx`（新）：模糊匹配、↑↓导航、回车执行、Esc 关闭、
+  `role=dialog`/`listbox`/`option`、`aria-activedescendant`
+- `src/pages/EditorPage.tsx`：`paletteCommands`（12 个命令）、Ctrl+K/Ctrl+Enter/`?` 快捷键、
+  `palette-btn` 顶栏按钮、快捷键帮助对话框、`skip-link`、`run-status-live`
+- `src/sw.ts`（新）+ `scripts/build-sw.mjs`：应用壳缓存优先+后台更新、其他资源网络优先；
+  版本号取 package.json；`src/lib/serviceWorker.ts` 注册与更新管理；`src/App.tsx` 更新横幅
+- `src/app.css`：`.cmd-palette-*` 样式、`.sr-only`/`.skip-link`、移动端媒体查询、
+  `.canvas-wrap` 加 `overflow: hidden`、grid 子项 `min-width: 0`
+
+### 测试结果（本地，2026-10-02）
+- `tests/e2e/m5-flow.spec.ts` ✅ 8/8（命令面板打开/搜索执行/Esc；`?` 帮助；Ctrl+Enter 真实运行；
+  dialog/listbox/option ARIA；跳链/live region；390px 移动端；SW 注册）
+- 真实 bug 修复（均有证据）：
+  1. D-029：命令面板 `.palette` 类名与侧边栏冲突致布局错乱 → 加 `cmd-` 前缀，截图验证修复
+  2. D-030：`key === 'Enter'` 永假（key 已小写）→ 改为 `'enter'`，E2E 验证
+
+### 下一步
+1. 全量 E2E 回归 → 本地 commit M5（不 push）
+2. 进入 M6（最终交付：全量回归、文档、统一推送、Pages 验证）
 ## M6 最终交付（未开始）

@@ -8,6 +8,7 @@ import Canvas, { NODE_W } from '../components/Canvas';
 import Inspector from '../components/Inspector';
 import DataTableView from '../components/DataTableView';
 import ChartView from '../components/ChartView';
+import CommandPalette, { type PaletteCommand } from '../components/CommandPalette';
 import { useEditor } from '../store/useEditor';
 import { listNodeDefs, exportTableCsv, getNodeDef } from '../engine/nodes';
 import { APP_VERSION } from '../lib/version';
@@ -267,6 +268,8 @@ export default function EditorPage() {
   /** branch 等多输出节点的查看端口。 */
   const [viewPort, setViewPort] = useState<string | null>(null);
   const [snapOpen, setSnapOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const clipboardRef = useRef<ReturnType<typeof actions.copySelection>>(null);
   const canvasWrapRef = useRef<HTMLElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
@@ -275,6 +278,28 @@ export default function EditorPage() {
   const graph = doc?.graph ?? null;
   const graphRef = useRef(graph);
   graphRef.current = graph;
+
+  // 命令面板命令注册（M5）
+  const paletteCommands: PaletteCommand[] = useMemo(() => {
+    const g = graphRef.current;
+    return [
+      { id: 'run', title: '运行工作流', shortcut: 'Ctrl+Enter', run: () => { if (!state.running) void actions.run(); } },
+      { id: 'cancel-run', title: '取消运行', run: () => { if (state.running) actions.cancelRun(); } },
+      { id: 'undo', title: '撤销', shortcut: 'Ctrl+Z', run: () => actions.undo() },
+      { id: 'redo', title: '重做', shortcut: 'Ctrl+Shift+Z', run: () => actions.redo() },
+      { id: 'save', title: '立即保存', shortcut: 'Ctrl+S', run: () => { void actions.saveNow(); } },
+      { id: 'export', title: '导出工程 JSON', run: () => {
+        const text = actions.exportProject();
+        if (text) downloadText(`flowlab-${doc?.name ?? 'project'}.flowlab.json`, text, 'application/json');
+      } },
+      { id: 'snapshot', title: '命名快照…', run: () => setSnapOpen(true) },
+      { id: 'clear-cache', title: '清除增量缓存', run: () => actions.clearCache() },
+      { id: 'select-all', title: '全选节点', shortcut: 'Ctrl+A', run: () => { if (g) actions.select(g.nodes.map((n) => n.id)); } },
+      { id: 'delete-selection', title: '删除选中节点', shortcut: 'Delete', run: () => actions.deleteSelection() },
+      { id: 'shortcuts', title: '快捷键帮助…', shortcut: '?', run: () => setShortcutsOpen(true) },
+      { id: 'toggle-results', title: '展开/收起结果面板', run: () => setResultsOpen((v) => !v) },
+    ];
+  }, [actions, doc?.name, state.running]);
 
   const nodeStatus = useMemo(() => {
     const m: Record<string, NodeRunStatus> = {};
@@ -362,6 +387,15 @@ export default function EditorPage() {
         e.preventDefault();
         const g = graphRef.current;
         if (g) actions.select(g.nodes.map((n) => n.id));
+      } else if (mod && key === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (mod && key === 'enter') {
+        e.preventDefault();
+        if (!state.running) void actions.run();
+      } else if (e.key === '?' && !mod) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -379,7 +413,7 @@ export default function EditorPage() {
   if (state.loadError) return <div className="page"><p role="alert">加载失败：{state.loadError}</p></div>;
   if (!meta) {
     return (
-      <main className="page">
+      <main className="editor" data-testid="editor-page">
         <h1>项目不存在</h1>
         <p>找不到该项目，它可能已被删除。深链接不会把项目数据同步到其他设备。</p>
         <Link to="/">返回项目列表</Link>
@@ -403,6 +437,9 @@ export default function EditorPage() {
 
   return (
     <div className="editor">
+      <a href="#canvas-main" className="skip-link" data-testid="skip-link">
+        跳到画布
+      </a>
       <header className="topbar">
         <Link to="/" className="back">← 项目</Link>
         <strong data-testid="project-name">{doc.name}</strong>
@@ -440,6 +477,22 @@ export default function EditorPage() {
           />{' '}
           调试
         </label>
+        <span
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          data-testid="run-status-live"
+        >
+          {state.running ? '工作流运行中' : state.run ? `运行完成：${state.run.nodeStates ? Object.keys(state.run.nodeStates).length : 0} 个节点` : '未运行'}
+        </span>
+        <button
+          data-testid="palette-btn"
+          onClick={() => setPaletteOpen(true)}
+          title="命令面板（Ctrl+K）"
+          aria-label="打开命令面板"
+        >
+          ⌘ 命令
+        </button>
         {!state.running ? (
           <button
             data-testid="run-btn"
@@ -538,7 +591,7 @@ export default function EditorPage() {
           </div>
         </aside>
 
-        <main className="canvas-wrap" ref={canvasWrapRef}>
+        <main className="canvas-wrap" ref={canvasWrapRef} id="canvas-main" tabIndex={-1}>
           <Canvas
             graph={graph}
             selection={state.selection}
@@ -716,6 +769,59 @@ export default function EditorPage() {
           FlowLab Studio v{APP_VERSION} · 本地运行 · M3 里程碑
         </span>
       </footer>
+
+      <CommandPalette
+        open={paletteOpen}
+        commands={paletteCommands}
+        onClose={() => setPaletteOpen(false)}
+      />
+
+      {shortcutsOpen && (
+        <div
+          className="cmd-palette-overlay"
+          data-testid="shortcuts-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShortcutsOpen(false);
+          }}
+        >
+          <div
+            className="cmd-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-label="快捷键帮助"
+            data-testid="shortcuts-dialog"
+          >
+            <div className="cmd-palette-input" style={{ fontWeight: 600 }}>
+              快捷键
+              <button
+                data-testid="shortcuts-close"
+                onClick={() => setShortcutsOpen(false)}
+                style={{ float: 'right' }}
+                aria-label="关闭快捷键帮助"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="cmd-palette-list">
+              {[
+                ['运行工作流', 'Ctrl+Enter'],
+                ['命令面板', 'Ctrl+K'],
+                ['撤销 / 重做', 'Ctrl+Z / Ctrl+Shift+Z'],
+                ['保存', 'Ctrl+S'],
+                ['全选节点', 'Ctrl+A'],
+                ['删除选中', 'Delete'],
+                ['复制 / 粘贴', 'Ctrl+C / Ctrl+V'],
+                ['快捷键帮助', '?'],
+              ].map(([name, keys]) => (
+                <div key={name} className="cmd-palette-item">
+                  <span>{name}</span>
+                  <kbd>{keys}</kbd>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

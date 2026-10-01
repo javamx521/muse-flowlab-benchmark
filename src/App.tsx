@@ -4,6 +4,7 @@ import HomePage from './pages/HomePage'
 import EditorPage from './pages/EditorPage'
 import { THEME_KEY } from './lib/storageKeys'
 import { APP_VERSION, BUILD_TIME, shortSha } from './lib/version'
+import { applySwUpdate, onSwUpdate, registerServiceWorker, type SwUpdateState } from './lib/serviceWorker'
 import './app.css'
 
 type Theme = 'light' | 'dark'
@@ -23,6 +24,13 @@ function getInitialTheme(): Theme {
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme)
+  const [swState, setSwState] = useState<SwUpdateState>('none')
+
+  // Service Worker 注册与更新提示（M5）
+  useEffect(() => {
+    onSwUpdate(setSwState)
+    void registerServiceWorker()
+  }, [])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -49,6 +57,40 @@ export default function App() {
             {theme === 'light' ? '🌙 深色' : '☀️ 浅色'}
           </button>
         </header>
+
+        {swState !== 'none' && (
+          <div
+            className="sw-banner"
+            role="status"
+            aria-live="polite"
+            data-testid="sw-update-banner"
+          >
+            <span>
+              {swState === 'available'
+                ? '发现新版本，刷新后生效。'
+                : '新版本已就绪，正在刷新…'}
+            </span>
+            {swState === 'available' && (
+              <button
+                data-testid="sw-update-btn"
+                onClick={() => {
+                  applySwUpdate()
+                  // SW 接管后刷新页面
+                  setTimeout(() => window.location.reload(), 800)
+                }}
+              >
+                立即更新
+              </button>
+            )}
+            <button
+              data-testid="sw-dismiss-btn"
+              onClick={() => setSwState('none')}
+              aria-label="忽略本次更新提示"
+            >
+              稍后
+            </button>
+          </div>
+        )}
 
         <Routes>
           <Route path="/" element={<HomePage />} />

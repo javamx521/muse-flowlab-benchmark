@@ -161,3 +161,22 @@
   表现为"运行卡住"假象。实测 20k 行链路 6.2s 正常完成，产品无 bug。
 - 约定：凡断言运行日志/缓存汇总，先 `getByTestId('tab-log').click()`。
 - 状态：已采用（测试约定）。
+
+## D-029 命令面板 CSS 类名必须避免与现有类冲突（M5，真实 bug）
+- 现象：命令面板用 `.palette` 类名，与侧边栏 `aside.palette` 冲突，导致侧边栏被
+  `width: min(560px, 92vw)` 撑到 560px、画布网格溢出覆盖按钮。
+- 修复：命令面板类统一加 `cmd-` 前缀（`.cmd-palette` 等）；另补 `.canvas-wrap`
+  `overflow: hidden` 与 grid 子项 `min-width: 0`。
+- 状态：已修复并截图验证。
+
+## D-030 快捷键 key 已转小写，比较时用小写（M5，真实 bug）
+- `const key = e.key.toLowerCase()` 后，`key === 'Enter'` 永假；改为 `key === 'enter'`。
+- 状态：已修复，E2E 验证 Ctrl+Enter 可运行。
+
+## D-031 Service Worker 策略（M5）
+- 手写 SW（`src/sw.ts`，经 `scripts/build-sw.mjs` 单独构建为 `dist/sw.js`），
+  未引入 workbox：应用壳缓存优先+后台更新，其他同源 GET 网络优先失败回退缓存；
+  版本号取 package.json version；新版本 `skipWaiting` 由页面"立即更新"按钮触发，
+  顶部横幅提示（`role=status`）。
+- 仅生产构建注册；GitHub Pages 子路径 scope 取 `import.meta.env.BASE_URL`。
+- 状态：已实现；E2E 仅断言注册 scope（含环境不支持时的降级断言）。

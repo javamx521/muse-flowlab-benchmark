@@ -87,7 +87,12 @@
 
 | 需求 | 状态 | 实现位置 | 测试证据 |
 |---|---|---|---|
-| 全部 | 未实现 | M5（Service Worker/更新提示/移动端/无障碍） | — |
+| 命令面板（Ctrl+K，模糊搜索） | 已实现且已验证 | `src/components/CommandPalette.tsx`、`src/pages/EditorPage.tsx`（`paletteCommands`） | `tests/e2e/m5-flow.spec.ts` 8/8（含打开/搜索执行/Esc/无障碍属性） |
+| 快捷键（Ctrl+Enter 运行、? 帮助等） | 已实现且已验证 | 同上；`?` 快捷键帮助对话框 | E2E：Ctrl+Enter 真实运行；`?` 打开帮助 |
+| 无障碍（dialog/listbox/option、live region、跳链） | 已实现且已验证 | CommandPalette ARIA；`run-status-live`；`skip-link` | E2E 断言 role/aria 属性 |
+| 手机查看模式（≤900px 堆叠布局） | 已实现且已验证 | `src/app.css` 媒体查询 | E2E：390px 视口布局不断裂、面板可用 |
+| Service Worker 离线 + 更新提示 | 已实现且已验证 | `src/sw.ts`、`scripts/build-sw.mjs`、`src/lib/serviceWorker.ts`、`src/App.tsx` 横幅 | E2E：生产构建注册 scope 断言；构建产物含 `dist/sw.js` |
+| 真实 bug 修复 | 已实现且已验证 | D-029（CSS 类冲突）、D-030（快捷键大小写） | 截图前后对比；E2E 通过 |
 
 ## M0 交付检查（任务书 §7）
 

@@ -4,7 +4,7 @@
     "react-dom": "18.3.1",
     "react-router-dom": "6.30.0"
   },
-  "description": "FlowLab Studio — 浏览器端可视化数据工作流 IDE（纯静态前端）",
+  "description": "FlowLab Studio \u2014 \u6d4f\u89c8\u5668\u7aef\u53ef\u89c6\u5316\u6570\u636e\u5de5\u4f5c\u6d41 IDE\uff08\u7eaf\u9759\u6001\u524d\u7aef\uff09",
   "devDependencies": {
     "@playwright/test": "1.49.1",
     "@types/node": "22.9.0",
@@ -25,7 +25,7 @@
   "name": "flowlab-studio",
   "private": true,
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && npm run build:sw",
     "dev": "vite",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -33,7 +33,8 @@
     "test:e2e": "playwright test",
     "test:unit": "vitest run --coverage",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "bench": "playwright test --config tests/bench/playwright.bench.config.ts"
+    "bench": "playwright test --config tests/bench/playwright.bench.config.ts",
+    "build:sw": "node scripts/build-sw.mjs"
   },
   "type": "module",
   "version": "0.1.0"
