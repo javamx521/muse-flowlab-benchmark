@@ -201,4 +201,16 @@
 ### 下一步
 1. 全量 E2E 回归 → 本地 commit M5（不 push）
 2. 进入 M6（最终交付：全量回归、文档、统一推送、Pages 验证）
-## M6 最终交付（未开始）
+## M6 最终交付（进行中，2026-10-02）
+
+### 交付前最终回归（本地，2026-10-02）
+- `lint` ✅ 0 错误；`typecheck` ✅；`build` ✅（含 `dist/sw.js`）
+- `test:unit` ✅ 197/197 通过
+- `test:e2e` ✅ 31/31 通过（M1–M5 无回归）
+- 基准：图/数据基准脚本可用，结果见 `docs/BENCHMARKS.md`
+
+### 推送计划
+- 本地 5 个提交（M1 d8a2378 → M2 69f3f3b → M3 48401fa → M4 60d0432 → M5 7342603），
+  一次 `push_files` 统一推送到 `javamx521/muse-flowlab-benchmark` 的 main 分支
+- 等 CI（ci.yml / e2e.yml）全绿；deploy.yml 自动发布到 Pages
+- 真实浏览器验证 Pages 上线：线上站"导入→运行→检查结果"，确认页显构建版本/commit SHA
