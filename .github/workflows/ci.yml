@@ -1,0 +1,62 @@
+# CI: 每次 push 与 PR 都执行完整质量门禁。
+# 名称与 package.json 脚本保持一致(任务书 §5)。
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: lint / typecheck / unit / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run build
+        env:
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: coverage-html
+          path: coverage/
+
+  e2e-chromium:
+    name: e2e (chromium)
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+        env:
+          VITE_GIT_SHA: ${{ github.sha }}
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-chromium
+          path: |
+            playwright-report/
+            test-results/

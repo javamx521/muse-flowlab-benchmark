@@ -1,0 +1,40 @@
+# E2E 跨浏览器: Chromium 每次都跑; Firefox/WebKit 每周 + 手动触发跑核心烟雾。
+# 任务书 §5: Chromium 执行完整 E2E; Firefox 与 WebKit 至少覆盖核心烟雾流程。
+# 不得把 WebKit 自动化测试描述为真实 iPhone 验证。
+name: E2E cross-browser
+
+on:
+  schedule:
+    - cron: '0 3 * * 1' # 每周一 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: smoke (chromium, firefox, webkit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run build
+        env:
+          VITE_GIT_SHA: ${{ github.sha }}
+      - run: npm run test:e2e
+        env:
+          FULL_BROWSERS: '1'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-cross-browser
+          path: |
+            playwright-report/
+            test-results/

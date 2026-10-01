@@ -1,0 +1,67 @@
+# Deploy: main 分支 push 时先跑完整质量门禁, 全部通过才发布到 Pages。
+# 任务书 §6: CI 检查失败时不得发布该提交。
+# Pages 发布源需在仓库 Settings → Pages 设为 GitHub Actions(用户手动操作)。
+name: Deploy to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 部署 job 只使用实际必需的最小权限(任务书 §6)。
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: verify & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+        env:
+          VITE_GIT_SHA: ${{ github.sha }}
+          VITE_BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+      - run: npm run test:e2e
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: deploy-failure-evidence
+          path: |
+            playwright-report/
+            test-results/
+            coverage/
+
+  deploy:
+    name: deploy to Pages
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

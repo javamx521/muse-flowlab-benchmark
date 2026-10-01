@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-ssr/
+
+# 测试与覆盖率
+coverage/
+test-results/
+playwright-report/
+
+# 日志与系统文件
+*.log
+.DS_Store
+
+# 本地环境
+.env
+.env.local
