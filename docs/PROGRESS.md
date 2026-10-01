@@ -209,8 +209,10 @@
 - `test:e2e` ✅ 31/31 通过（M1–M5 无回归）
 - 基准：图/数据基准脚本可用，结果见 `docs/BENCHMARKS.md`
 
-### 推送计划
-- 本地 5 个提交（M1 d8a2378 → M2 69f3f3b → M3 48401fa → M4 60d0432 → M5 7342603），
-  一次 `push_files` 统一推送到 `javamx521/muse-flowlab-benchmark` 的 main 分支
-- 等 CI（ci.yml / e2e.yml）全绿；deploy.yml 自动发布到 Pages
-- 真实浏览器验证 Pages 上线：线上站"导入→运行→检查结果"，确认页显构建版本/commit SHA
+### 推送状态（2026-10-02 20:10，等待用户审批）
+- 本地 7 个提交（M1 d8a2378 → M2 69f3f3b → M3 48401fa → M4 60d0432 → M5 7342603 → M6 文档 → M6 CI 调整）
+- **阻塞**：`push_files` 单次调用受 128KB 参数限制，无法一次推送全部 71 个文件（共 ~450KB）；
+  已拆分为 5 批（`~/workspace/flowlab/push/batch_*.json`，每批 <100KB），需 5 次审批
+- **阻塞**：`package-lock.json`（190KB）无法经 MCP 推送；CI 已改用 `npm install` 替代 `npm ci`
+- 推送测试（`PUSH_TEST.tmp`）触发审批卡超时，确认需用户手动批准
+- 待用户醒后批准推送 → 等 CI 全绿 → deploy.yml 自动发布 Pages → 真实浏览器验证上线
