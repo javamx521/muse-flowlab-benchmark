@@ -95,6 +95,8 @@ export interface NodeRunInfo {
   error?: string;
   startedAt?: number;
   finishedAt?: number;
+  /** 本次运行该节点是否命中增量缓存（未执行、直接复用）。 */
+  cacheHit?: boolean;
 }
 
 /** 一次运行的完整记录。 */
@@ -114,8 +116,8 @@ export interface RunRecord {
   portOutputs: Record<string, Record<string, DataTable>>;
   /** 调试模式下当前暂停所在的节点 id（无暂停时缺省）。 */
   debugPausedAt?: string;
-  /** 缓存命中证据（M4 填充）。 */
-  cacheHits?: string[];
+  /** 本次运行命中增量缓存的节点数（可观察的缓存证据）。 */
+  cacheHits: number;
 }
 
 export const MAX_PREVIEW_ROWS = 500;

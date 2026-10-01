@@ -28,6 +28,8 @@ import { newDocument } from './document';
 import { ConflictError } from './document';
 import type { ProjectDocument, RevisionedStorageBackend } from './document';
 import { UndoHistory } from './history';
+import { RunCache } from '../engine/cache';
+import type { CacheStats } from '../engine/cache';
 import { newSnapshotId } from './snapshots';
 import type { NamedSnapshot } from './document';
 import { serializeExport } from './exportImport';
@@ -66,6 +68,8 @@ export interface EditorState {
   canRedo: boolean;
   /** F07 多标签页写入冲突；非 null 时自动保存暂停，等待用户解决。 */
   conflict: ConflictInfo | null;
+  /** F08 增量缓存版本；清除缓存时递增以刷新统计显示。 */
+  cacheVersion: number;
 }
 
 type Action =
@@ -95,6 +99,7 @@ type Action =
   | { t: 'saveStatus'; status: EditorState['saveStatus'] }
   | { t: 'conflict'; info: ConflictInfo }
   | { t: 'conflictClear' }
+  | { t: 'cacheCleared' }
   | { t: 'replaceGraph'; graph: WorkflowGraph }; // 撤销/重做/快照恢复/自动布局用
 
 let nodeSeq = 0;
@@ -122,6 +127,8 @@ function reducer(state: EditorState, action: Action): EditorState {
       return { ...state, conflict: action.info };
     case 'conflictClear':
       return { ...state, conflict: null };
+    case 'cacheCleared':
+      return { ...state, cacheVersion: state.cacheVersion + 1 };
     case 'select':
       return { ...state, selection: action.ids };
     case 'setViewport':
@@ -314,6 +321,7 @@ const initialState: EditorState = {
   canUndo: false,
   canRedo: false,
   conflict: null,
+  cacheVersion: 0,
 };
 
 export interface EditorActions {
@@ -342,6 +350,10 @@ export interface EditorActions {
   stepDebug(): void;
   cancelRun(): void;
   selectRun(runId: string | null): void;
+  /** F08：读取增量缓存统计（命中/未命中/条目数/淘汰数）。 */
+  cacheStats(): CacheStats;
+  /** F08：清空增量缓存（释放内存）。 */
+  clearCache(): void;
   refreshIssues(): void;
   saveNow(): Promise<void>;
   /** F07 快照 */
@@ -411,6 +423,9 @@ export function useEditor(projectId: string, backend?: RevisionedStorageBackend,
   const revRef = useRef<number>(0);
   const conflictRef = useRef<ConflictInfo | null>(null);
   conflictRef.current = state.conflict;
+  // F08 增量缓存：编辑器会话级单例，跨运行复用；调试运行绕过（executor 内处理）
+  const cacheRef = useRef<RunCache | null>(null);
+  if (!cacheRef.current) cacheRef.current = new RunCache(50);
 
   if (!managerRef.current) {
     managerRef.current = new RunManager(makeBackend(), {
@@ -656,7 +671,12 @@ export function useEditor(projectId: string, backend?: RevisionedStorageBackend,
         if (!ok) return;
         const debug = opts?.debug ?? state.debugMode;
         dispatch({ t: 'runStart', debug });
-        await managerRef.current!.start(doc.graph, { debug });
+        await managerRef.current!.start(doc.graph, { debug, cache: cacheRef.current ?? undefined });
+      },
+      cacheStats: () => cacheRef.current!.stats(),
+      clearCache: () => {
+        cacheRef.current!.clear();
+        dispatch({ t: 'cacheCleared' });
       },
       setDebugMode: (debug) => dispatch({ t: 'setDebugMode', debug }),
       pauseDebug: () => managerRef.current?.pauseDebug(),

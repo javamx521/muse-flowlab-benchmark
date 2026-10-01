@@ -391,6 +391,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .datatable-scroll thead th { background: var(--bg-panel); position: sticky; top: 0; }
+/* M4 虚拟化：固定行高 28px，必须与 DataTableView 的 ROW_H 一致 */
+.datatable-scroll.virtualized tbody td { height: 28px; box-sizing: border-box; padding-top: 0; padding-bottom: 0; }
+.datatable-scroll.virtualized tbody tr.vspacer td { padding: 0; border: 0; }
 .rownum { color: var(--muted); font-size: 0.75rem; }
 .cell-null { color: var(--warn); font-style: italic; }
 .cell-empty { color: var(--muted); }

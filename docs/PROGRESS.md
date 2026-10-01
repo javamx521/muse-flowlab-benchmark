@@ -129,6 +129,49 @@
 ### 下一步
 1. 进入 M4（深层工程能力：F08 增量计算/大数据/性能）
 2. 最终统一推送前不 push（用户已睡，中途零 push 约定）
-## M4 深层工程能力（未开始）
+## M4 深层工程能力（进行中，2026-10-02）
+
+### 目标（F08 增量计算、大数据与性能）
+- 内容感知增量缓存：相同输入+参数+实现版本 → 复用上次结果；节点位置移动不失效；调试模式绕过
+- 虚拟化大数据表格：10 万行可流畅滚动（固定行高 28px + 滚动窗口渲染 + overscan）
+- 增量重算：只重算缓存失效的子图
+- 可复现性能基准（图编辑 300 节点 / 数据 100k 行），只记录不设门禁
+
+### 实现
+- `src/engine/cache.ts`（新）：`RunCache`（LRU，上限 50 条，淘汰统计）、`hashDataTable`
+  （FNV-1a 内容哈希，WeakMap 记忆化，区分 `1`/`"1"`/`null`/`-0`/`NaN`）、`stableStringify`
+  （键序无关规范参数序列化）、`makeNodeCacheKey` = `flc1|<kind>|v<implVersion>|<规范参数>|<端口=哈希,…>`
+- `src/engine/executor.ts`：`RunOptions.cache?`；执行前查缓存（命中复用表对象、`cacheHit: true`、
+  `record.cacheHits++`），执行后写入；调试模式不传 cache
+- `src/store/useEditor.ts`：会话级 `RunCache` 单例（`cacheRef`），`run()` 传入 cache，
+  `cacheStats()` / `clearCache()` actions
+- `src/components/DataTableView.tsx`（重写虚拟化）：固定行高 28px（`ROW_H`，与 `src/app.css`
+  的 `.virtualized` 约定一致）、滚动窗口渲染、上下 overscan 各 8 行、占位行撑高、thead 吸顶
+- `src/pages/EditorPage.tsx`：运行日志 tab 加"缓存"列（`cache-hit-<id>` 徽标）、`cache-summary`
+  汇总行 + `clear-cache` 按钮；Ctrl+A 全选（`graphRef` 防闭包过期）
+- `src/engine/types.ts`：`NodeRunInfo.cacheHit?`、`RunRecord.cacheHits`（必填）
+- 基准：`tests/bench/`（独立配置 `playwright.bench.config.ts`，`npm run bench`，不进 CI 门禁）；
+  `graphEdit.bench.spec.ts`（300 节点/600 边合法 DAG，mulberry32 seed 20261002）；
+  `data.bench.spec.ts`（100k×12 种子 CSV 全链路）
+- 文档：`docs/BENCHMARKS.md`（新建，转录中位数+环境/种子）、DECISIONS.md D-025/D-026/D-027/D-028
+
+### 测试结果（本地，2026-10-02）
+- `tests/unit/cache.test.ts` ✅ 13/13（哈希确定性/类型区分/行列顺序敏感；stableStringify 键序无关；
+  键稳定性/参数-版本-输入变化；LRU 淘汰与统计；执行器集成：二次相同运行 4/4 命中零重执行、
+  改参数仅下游重算 `cacheHits=1`、只移动位置 4/4 命中、改源数据全失效、调试绕过）
+- `tests/e2e/m4-flow.spec.ts` ✅ 3/3（真实浏览器：二次运行"3 个节点命中缓存"+徽标；改条件后
+  "1 个节点命中缓存"；清除后重跑 0 命中；5000 行 DOM <200 行，滚动到底部首行 `datarow->4000`）
+- 基准实测（chromium headless，生产构建，见 `docs/BENCHMARKS.md`）：
+  - 图（中位数）：load 1247ms；panZoom 4581ms（15 ops，≈305ms/操作）；multiDrag 1053ms；undo 236ms
+  - 数据 100k（中位数）：import 575ms；冷运行 6908ms；scroll 322ms（20 步）；cancel 273ms
+  - 未达标项如实记录（图平移、100k 冷运行），未修改测试数据逃避
+- 调试插曲（均已解决，产品无 bug）：
+  1. 数据基准"卡住" → 实为测试未切到"运行日志"tab 就等待 `cache-summary`（D-028；20k 行实测 6.2s 正常完成）
+  2. 取消测试悬挂 → 同页二次运行命中缓存瞬间完成，`cancel-btn` 不存在；修复为先清缓存再测取消
+  3. `node-d6` 点击问题 → SVG `<g>` 无 `.click()`、onMouseDown 在子 rect；改用运行日志行/JS 事件
+
+### 下一步
+1. 全部门禁（lint/typecheck/test:unit/test:e2e/build）→ 本地 commit M4（不 push）
+2. 进入 M5（F09 快捷键/命令面板/无障碍/手机查看/Service Worker 离线）
 ## M5 完整产品体验（未开始）
 ## M6 最终交付（未开始）

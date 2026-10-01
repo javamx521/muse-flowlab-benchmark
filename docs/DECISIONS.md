@@ -136,3 +136,28 @@
   `testInfo.outputPath` 目录名来自中文测试标题，故固件改写系统临时目录 ASCII 路径
  （`tests/e2e/m3-flow.spec.ts` 的 `asciiFixturePath`）。
 - 状态：已采用（测试约定）。
+
+## D-025 增量缓存键设计（M4，F08）
+- 缓存键 = `flc1|<kind>|v<implVersion>|<规范参数>|<端口=内容哈希,…>`；节点**位置不参与**键（单纯移动不失效）。
+- 内容哈希用 FNV-1a（字符串/数字/布尔/null 区分类型；-0/NaN 单独标记），按表对象 WeakMap 记忆化；
+  参数用键序无关的 `stableStringify` 规范化。
+- 命中时复用同一表对象（下游哈希随之稳定）；调试模式绕过缓存（保证断点/日志看到真实执行）。
+- 保留策略：运行历史最多 5 条、RunCache LRU 上限 50 条、可手动清除；调试/超限不报错。
+- 状态：已采用。
+
+## D-026 表格虚拟化行高约定（M4，F08）
+- 虚拟化表格固定行高 28px（`ROW_H`），CSS `.virtualized td` 必须同步 28px，否则占位计算错位；
+  overscan 上下各 8 行，thead 吸顶；100k 行滚动用 rAF 分步验证。
+- 状态：已采用。
+
+## D-027 基准只记录不设门禁（M4，F08）
+- `tests/bench/*.bench.spec.ts` 用独立 Playwright 配置（`npm run bench`），不进 CI 质量门禁；
+  固定种子（mulberry32，seed 20261002）、1 次预热 + 3 次实测，记录浏览器 UA/视口/长任务数；
+  P95<150ms 等为目标非保证，未达标如实记录瓶颈，不改数据逃避。
+- 状态：已采用。
+
+## D-028 基准/测试必须先切到"运行日志"tab 再断言 cache-summary（M4，测试教训）
+- `cache-summary` 与运行日志行只在结果面板 `tab==='log'` 时渲染；直接等待该 testid 会超时，
+  表现为"运行卡住"假象。实测 20k 行链路 6.2s 正常完成，产品无 bug。
+- 约定：凡断言运行日志/缓存汇总，先 `getByTestId('tab-log').click()`。
+- 状态：已采用（测试约定）。

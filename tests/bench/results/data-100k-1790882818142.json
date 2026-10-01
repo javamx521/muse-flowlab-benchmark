@@ -1,0 +1,36 @@
+{
+  "benchmark": "data-100k",
+  "seed": 20261002,
+  "rows": 100000,
+  "cols": 12,
+  "browser": "chromium",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.33 Safari/537.36",
+  "viewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "runs": [
+    {
+      "importMs": 693,
+      "runMs": 6859,
+      "scrollMs": 319,
+      "cancelMs": 556,
+      "outputRows": 8
+    },
+    {
+      "importMs": 574,
+      "runMs": 6908,
+      "scrollMs": 331,
+      "cancelMs": 273,
+      "outputRows": 8
+    },
+    {
+      "importMs": 575,
+      "runMs": 6930,
+      "scrollMs": 322,
+      "cancelMs": 269,
+      "outputRows": 8
+    }
+  ],
+  "recordedAt": "2026-10-01T19:26:58.140Z"
+}

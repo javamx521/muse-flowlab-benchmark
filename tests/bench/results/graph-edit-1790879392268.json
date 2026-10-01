@@ -1,0 +1,36 @@
+{
+  "benchmark": "graph-edit",
+  "seed": 20261002,
+  "nodes": 300,
+  "edges": 600,
+  "browser": "chromium",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.33 Safari/537.36",
+  "viewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "runs": [
+    {
+      "loadMs": 1424,
+      "panZoomMs": 4871,
+      "multiDragMs": 1689,
+      "undoMs": 236,
+      "longtasks": 16
+    },
+    {
+      "loadMs": 1022,
+      "panZoomMs": 4300,
+      "multiDragMs": 1053,
+      "undoMs": 223,
+      "longtasks": 10
+    },
+    {
+      "loadMs": 1247,
+      "panZoomMs": 4581,
+      "multiDragMs": 922,
+      "undoMs": 253,
+      "longtasks": 9
+    }
+  ],
+  "recordedAt": "2026-10-01T18:29:52.267Z"
+}

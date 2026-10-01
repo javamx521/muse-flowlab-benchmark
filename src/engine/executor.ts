@@ -14,6 +14,7 @@ import type {
 } from './types';
 import { getNodeDef, normalizeOutputs, primaryOutputPort } from './nodes';
 import { topoSort, upstreamNodeIds, canRun } from './graph';
+import { RunCache, hashDataTable, makeNodeCacheKey } from './cache';
 
 export interface ExecuteRequest {
   runId: string;
@@ -87,6 +88,11 @@ export interface RunCallbacks {
 export interface RunOptions {
   /** 调试模式：确定性单并发 + 支持断点/单步/暂停/继续。 */
   debug?: boolean;
+  /**
+   * 增量缓存（F08）。传入则在运行中复用未变化子图的结果；
+   * 调试模式下自动绕过（保证单步确定性）。
+   */
+  cache?: RunCache;
 }
 
 let runSeq = 0;
@@ -190,6 +196,7 @@ export class RunManager {
       nodeStates: {},
       outputs: {},
       portOutputs: {},
+      cacheHits: 0,
     };
     const nodeById = new Map<string, NodeInstance>(snapshot.nodes.map((n) => [n.id, n]));
     for (const n of snapshot.nodes) {
@@ -254,6 +261,36 @@ export class RunManager {
         }
         emit(nodeId, { status: 'running', inputRows, startedAt: Date.now() });
         const t0 = Date.now();
+        // F08 增量缓存：键含 kind/implVersion/语义参数/输入内容哈希；调试模式绕过。
+        const cache = opts.cache && !this.debug ? opts.cache : undefined;
+        const def = getNodeDef(node.kind);
+        let cacheKey: string | null = null;
+        if (cache) {
+          const inputHashes: Record<string, string> = {};
+          for (const [port, table] of Object.entries(inputs)) inputHashes[port] = hashDataTable(table);
+          cacheKey = makeNodeCacheKey({
+            kind: node.kind,
+            implVersion: def.implVersion,
+            params: node.params,
+            inputHashes,
+          });
+          const hit = cache.get(cacheKey);
+          if (hit) {
+            const tables = hit.tables;
+            record.portOutputs[nodeId] = tables;
+            const primary = tables[primaryOutputPort(def)];
+            if (primary) record.outputs[nodeId] = primary;
+            record.cacheHits += 1;
+            emit(nodeId, {
+              status: 'ok',
+              outputRows: primary?.rows.length ?? 0,
+              durationMs: Date.now() - t0,
+              finishedAt: Date.now(),
+              cacheHit: true,
+            });
+            continue;
+          }
+        }
         const resp = await this.backend.execute({
           runId,
           nodeId,
@@ -281,11 +318,11 @@ export class RunManager {
           continue;
         }
         // 归一化多端口输出：portOutputs 存全端口，outputs 存主输出（向后兼容）
-        const def = getNodeDef(node.kind);
         const tables = resp.tables ?? (resp.table ? { [primaryOutputPort(def)]: resp.table } : {});
         record.portOutputs[nodeId] = tables;
         const primary = tables[primaryOutputPort(def)];
         if (primary) record.outputs[nodeId] = primary;
+        if (cache && cacheKey) cache.set(cacheKey, { nodeId, kind: node.kind, tables });
         emit(nodeId, {
           status: 'ok',
           outputRows: primary?.rows.length ?? 0,

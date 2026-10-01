@@ -76,7 +76,12 @@
 
 | 需求 | 状态 | 实现位置 | 测试证据 |
 |---|---|---|---|
-| 全部 | 未实现 | M4 | — |
+| 内容感知缓存（参数+输入哈希+实现版本键；位置不参与） | 已实现且已验证 | `src/engine/cache.ts`、`src/engine/executor.ts`、`src/store/useEditor.ts`（`cacheRef`/`cacheStats`/`clearCache`） | `tests/unit/cache.test.ts` 13/13；`tests/e2e/m4-flow.spec.ts` 3/3（真实浏览器命中徽标/汇总/清除） |
+| 虚拟化大数据表格（10万行可滚动，固定行高+窗口渲染） | 已实现且已验证 | `src/components/DataTableView.tsx`（`ROW_H=28`，overscan 8）、`src/app.css` | `tests/e2e/m4-flow.spec.ts`（5000 行 DOM <200 行；滚动到底部首行 `datarow->4000`） |
+| 增量重算（仅失效子图执行） | 已实现且已验证 | 同上（缓存键天然实现） | 单元+E2E：改 filter 参数仅下游重算，`cacheHits=1` |
+| 调试模式绕过缓存 | 已实现且已验证 | `src/engine/executor.ts`（`RunOptions.cache` 可选；调试不传） | `tests/unit/cache.test.ts` |
+| 性能基准（图 300 节点 / 数据 100k 行，可复现） | 已实现且已验证 | `tests/bench/` + `docs/BENCHMARKS.md`（中位数见文档） | 基准脚本 2026-10-02 实测通过；原始 JSON 在 `tests/bench/results/` |
+| 性能目标（P95<150ms / 10万行<3s） | 部分实现 | 未达标项如实记录于 `docs/BENCHMARKS.md`（图平移 ~305ms/操作；100k 冷运行 6.9s） | 基准数据为证，未修改测试数据逃避 |
 
 ## F09 离线、部署更新与交互质量
 

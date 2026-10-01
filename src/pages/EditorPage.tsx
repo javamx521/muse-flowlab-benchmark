@@ -273,6 +273,8 @@ export default function EditorPage() {
 
   const doc = state.doc;
   const graph = doc?.graph ?? null;
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
 
   const nodeStatus = useMemo(() => {
     const m: Record<string, NodeRunStatus> = {};
@@ -356,6 +358,10 @@ export default function EditorPage() {
       } else if (mod && key === 'v' && clipboardRef.current) {
         e.preventDefault();
         actions.paste(clipboardRef.current.nodes, clipboardRef.current.edges);
+      } else if (mod && key === 'a') {
+        e.preventDefault();
+        const g = graphRef.current;
+        if (g) actions.select(g.nodes.map((n) => n.id));
       }
     };
     window.addEventListener('keydown', onKey);
@@ -658,33 +664,48 @@ export default function EditorPage() {
               </button>
             ))}
             {state.run && (
-              <table className="run-table">
-                <thead>
-                  <tr>
-                    <th>节点</th>
-                    <th>状态</th>
-                    <th>输入行</th>
-                    <th>输出行</th>
-                    <th>耗时</th>
-                    <th>错误</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(state.run.nodeStates).map(([nid, info]) => {
-                    const n = graph.nodes.find((x) => x.id === nid);
-                    return (
-                      <tr key={nid} data-testid={`runrow-${nid}`}>
-                        <td>{n?.name ?? nid}</td>
-                        <td>{info.status}</td>
-                        <td>{info.inputRows}</td>
-                        <td>{info.outputRows}</td>
-                        <td>{info.durationMs} ms</td>
-                        <td className="err">{info.error ?? ''}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <>
+                <p className="muted small" data-testid="cache-summary">
+                  增量缓存：本次运行 {state.run.cacheHits} 个节点命中缓存
+                  {(() => {
+                    const s = actions.cacheStats();
+                    return `（缓存中共 ${s.entries} 条 · 累计命中 ${s.hits} · 未命中 ${s.misses} · 淘汰 ${s.evictions}）`;
+                  })()}
+                  {' '}
+                  <button data-testid="clear-cache" onClick={() => actions.clearCache()} title="清空增量缓存，释放内存；下次运行将重新计算">
+                    清除缓存
+                  </button>
+                </p>
+                <table className="run-table">
+                  <thead>
+                    <tr>
+                      <th>节点</th>
+                      <th>状态</th>
+                      <th>缓存</th>
+                      <th>输入行</th>
+                      <th>输出行</th>
+                      <th>耗时</th>
+                      <th>错误</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(state.run.nodeStates).map(([nid, info]) => {
+                      const n = graph.nodes.find((x) => x.id === nid);
+                      return (
+                        <tr key={nid} data-testid={`runrow-${nid}`}>
+                          <td>{n?.name ?? nid}</td>
+                          <td>{info.status}</td>
+                          <td>{info.cacheHit ? <span className="badge ok" data-testid={`cache-hit-${nid}`}>命中</span> : '—'}</td>
+                          <td>{info.inputRows}</td>
+                          <td>{info.outputRows}</td>
+                          <td>{info.durationMs} ms</td>
+                          <td className="err">{info.error ?? ''}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </>
             )}
           </div>
         )}
