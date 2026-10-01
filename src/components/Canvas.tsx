@@ -12,16 +12,33 @@ import type { Viewport } from '../store/useEditor';
 export const NODE_W = 200;
 export const NODE_HEADER_H = 36;
 export const NODE_BODY_H = 44;
+const PORT_GAP = 24;
+const PORT_TOP = 18;
+
+/** 端口在节点内的相对坐标（多端口垂直排列）。 */
+export function portOffset(index: number): { x: number; y: number } {
+  return { x: 0, y: NODE_HEADER_H + PORT_TOP + index * PORT_GAP };
+}
+
+/** 节点内容高度（随端口数量增长）。 */
+export function nodeHeight(def: { inputs: string[]; outputs: string[] }): number {
+  const rows = Math.max(def.inputs.length, def.outputs.length, 1);
+  return Math.max(NODE_HEADER_H + NODE_BODY_H, NODE_HEADER_H + PORT_TOP * 2 + (rows - 1) * PORT_GAP);
+}
 
 interface Props {
   graph: WorkflowGraph;
   selection: string[];
   viewport: Viewport;
   nodeStatus: Record<string, NodeRunStatus>;
+  /** 断点标记（调试用）。 */
+  breakpoints?: Record<string, boolean>;
+  /** 调试暂停所在的节点 id。 */
+  debugPausedAt?: string | null;
   onSelect(ids: string[]): void;
   onMoveNode(id: string, x: number, y: number): void;
   onMoveNodes(moves: { id: string; x: number; y: number }[]): void;
-  onConnect(source: string, target: string): void;
+  onConnect(source: string, target: string, sourcePort?: string, targetPort?: string): void;
   onDeleteEdge(edgeId: string): void;
   onViewportChange(v: Viewport): void;
 }
@@ -35,9 +52,18 @@ const STATUS_COLOR: Record<NodeRunStatus, string> = {
   skipped: 'var(--muted)',
 };
 
-function portPos(node: { position: { x: number; y: number } }, side: 'in' | 'out'): { x: number; y: number } {
-  const y = node.position.y + NODE_HEADER_H + NODE_BODY_H / 2;
-  return side === 'in' ? { x: node.position.x, y } : { x: node.position.x + NODE_W, y };
+function portPos(
+  node: { position: { x: number; y: number } },
+  def: { inputs: string[]; outputs: string[] },
+  side: 'in' | 'out',
+  port: string,
+): { x: number; y: number } {
+  const list = side === 'in' ? def.inputs : def.outputs;
+  const idx = Math.max(0, list.indexOf(port));
+  const off = portOffset(idx);
+  return side === 'in'
+    ? { x: node.position.x, y: node.position.y + off.y }
+    : { x: node.position.x + NODE_W, y: node.position.y + off.y };
 }
 
 export default function Canvas(props: Props) {
@@ -49,7 +75,7 @@ export default function Canvas(props: Props) {
     orig: Map<string, { x: number; y: number }>;
   }>(null);
   const [panning, setPanning] = useState<null | { sx: number; sy: number; vx: number; vy: number }>(null);
-  const [connecting, setConnecting] = useState<null | { source: string; x: number; y: number }>(null);
+  const [connecting, setConnecting] = useState<null | { source: string; sourcePort: string; x: number; y: number }>(null);
   const dragRef = useRef(dragging);
   dragRef.current = dragging;
   const panRef = useRef(panning);
@@ -87,20 +113,20 @@ export default function Canvas(props: Props) {
     setDragging({ ids, startWorld: w, orig });
   };
 
-  const onPortMouseDown = (e: React.MouseEvent, nodeId: string, side: 'in' | 'out') => {
+  const onPortMouseDown = (e: React.MouseEvent, nodeId: string, side: 'in' | 'out', port: string) => {
     e.stopPropagation();
     e.preventDefault(); // 关键：抑制原生 HTML5 dragstart，否则连线拖拽的 mouseup 会被吞掉
     if (side === 'out') {
       const w = toWorld(e.clientX, e.clientY);
-      setConnecting({ source: nodeId, x: w.x, y: w.y });
+      setConnecting({ source: nodeId, sourcePort: port, x: w.x, y: w.y });
     }
   };
 
-  const onPortMouseUp = (e: React.MouseEvent, nodeId: string, side: 'in' | 'out') => {
+  const onPortMouseUp = (e: React.MouseEvent, nodeId: string, side: 'in' | 'out', port: string) => {
     e.stopPropagation();
     const c = connRef.current;
     if (c && side === 'in' && c.source !== nodeId) {
-      props.onConnect(c.source, nodeId);
+      props.onConnect(c.source, nodeId, c.sourcePort, port);
     }
     setConnecting(null);
   };
@@ -139,6 +165,7 @@ export default function Canvas(props: Props) {
         const rect = svgRef.current.getBoundingClientRect();
         setConnecting({
           source: c.source,
+          sourcePort: c.sourcePort,
           x: (e.clientX - rect.left - viewport.x) / viewport.k,
           y: (e.clientY - rect.top - viewport.y) / viewport.k,
         });
@@ -200,8 +227,16 @@ export default function Canvas(props: Props) {
           const s = nodeById(e.source);
           const t = nodeById(e.target);
           if (!s || !t) return null;
-          const p1 = portPos(s, 'out');
-          const p2 = portPos(t, 'in');
+          let sDef;
+          let tDef;
+          try {
+            sDef = getNodeDef(s.kind);
+            tDef = getNodeDef(t.kind);
+          } catch {
+            return null;
+          }
+          const p1 = portPos(s, sDef, 'out', e.sourcePort ?? 'out');
+          const p2 = portPos(t, tDef, 'in', e.targetPort ?? 'in');
           return (
             <path
               key={e.id}
@@ -222,7 +257,13 @@ export default function Canvas(props: Props) {
           (() => {
             const s = nodeById(connecting.source);
             if (!s) return null;
-            const p1 = portPos(s, 'out');
+            let sDef;
+            try {
+              sDef = getNodeDef(s.kind);
+            } catch {
+              return null;
+            }
+            const p1 = portPos(s, sDef, 'out', connecting.sourcePort);
             return <path d={edgePath(p1.x, p1.y, connecting.x, connecting.y)} className="edge edge-temp" />;
           })()}
         {/* 节点 */}
@@ -236,49 +277,75 @@ export default function Canvas(props: Props) {
           const selected = selection.includes(n.id);
           const status = nodeStatus[n.id] ?? 'pending';
           const { x, y } = n.position;
-          const inP = portPos(n, 'in');
-          const outP = portPos(n, 'out');
+          const h = nodeHeight(def);
+          const isPaused = props.debugPausedAt === n.id;
+          const hasBp = props.breakpoints?.[n.id] === true;
           return (
             <g key={n.id} data-testid={`node-${n.id}`} transform={`translate(${x},${y})`}>
               <rect
                 width={NODE_W}
-                height={NODE_HEADER_H + NODE_BODY_H}
+                height={h}
                 rx={10}
-                className={`node ${selected ? 'selected' : ''}`}
-                style={{ stroke: selected ? 'var(--accent)' : STATUS_COLOR[status] }}
+                className={`node ${selected ? 'selected' : ''} ${isPaused ? 'debug-paused' : ''}`}
+                style={{ stroke: isPaused ? 'var(--warn)' : selected ? 'var(--accent)' : STATUS_COLOR[status] }}
                 onMouseDown={(e) => onNodeMouseDown(e, n.id)}
               />
               <rect width={NODE_W} height={NODE_HEADER_H} rx={10} className="node-header" onMouseDown={(e) => onNodeMouseDown(e, n.id)} />
               <rect y={NODE_HEADER_H - 10} width={NODE_W} height={10} className="node-header" onMouseDown={(e) => onNodeMouseDown(e, n.id)} />
               <text x={12} y={23} className="node-title" onMouseDown={(e) => onNodeMouseDown(e, n.id)}>
-                {n.name}
+                {hasBp ? '● ' : ''}{n.name}
               </text>
               <text x={12} y={NODE_HEADER_H + 20} className="node-kind" onMouseDown={(e) => onNodeMouseDown(e, n.id)}>
                 {def.title}
               </text>
               <text x={12} y={NODE_HEADER_H + 38} className="node-status" onMouseDown={(e) => onNodeMouseDown(e, n.id)}>
-                {statusText(status)}
+                {isPaused ? '已暂停（调试）' : statusText(status)}
               </text>
-              {def.inputs.length > 0 && (
-                <circle
-                  data-testid={`port-in-${n.id}`}
-                  cx={inP.x - x}
-                  cy={inP.y - y}
-                  r={8}
-                  className="port"
-                  onMouseUp={(e) => onPortMouseUp(e, n.id, 'in')}
-                />
-              )}
-              {def.hasOutput && (
-                <circle
-                  data-testid={`port-out-${n.id}`}
-                  cx={outP.x - x}
-                  cy={outP.y - y}
-                  r={8}
-                  className="port"
-                  onMouseDown={(e) => onPortMouseDown(e, n.id, 'out')}
-                />
-              )}
+              {def.inputs.map((port, i) => {
+                const off = portOffset(i);
+                return (
+                  <g key={`in-${port}`}>
+                    <circle
+                      data-testid={`port-in-${port}-${n.id}`}
+                      cx={0}
+                      cy={off.y}
+                      r={8}
+                      className="port"
+                      onMouseUp={(e) => onPortMouseUp(e, n.id, 'in', port)}
+                    >
+                      <title>输入端口 {port}</title>
+                    </circle>
+                    {def.inputs.length > 1 && (
+                      <text x={14} y={off.y + 4} className="port-label">
+                        {port}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              {def.hasOutput &&
+                def.outputs.map((port, i) => {
+                  const off = portOffset(i);
+                  return (
+                    <g key={`out-${port}`}>
+                      <circle
+                        data-testid={`port-out-${port}-${n.id}`}
+                        cx={NODE_W}
+                        cy={off.y}
+                        r={8}
+                        className="port"
+                        onMouseDown={(e) => onPortMouseDown(e, n.id, 'out', port)}
+                      >
+                        <title>输出端口 {port}</title>
+                      </circle>
+                      {def.outputs.length > 1 && (
+                        <text x={NODE_W - 14} y={off.y + 4} textAnchor="end" className="port-label">
+                          {port}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
             </g>
           );
         })}

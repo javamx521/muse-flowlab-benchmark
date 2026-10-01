@@ -18,25 +18,24 @@ export interface DataTable {
   dataVersion?: number;
 }
 
-/** 节点类型标识。M1 先实现 4 种；M2 补齐到 16 种。 */
+/** 节点类型标识：16 种（F02）。 */
 export type NodeKind =
   | 'csv-input'
+  | 'json-input'
+  | 'synthetic-input'
   | 'filter'
   | 'computed-column'
-  | 'output'
-  // M2 预留（nodes.ts 注册后生效）
-  | 'json-input'
   | 'select-columns'
-  | 'sort'
-  | 'aggregate'
+  | 'branch'
   | 'join'
   | 'union'
   | 'dedupe'
+  | 'aggregate'
+  | 'sort'
   | 'limit'
-  | 'sample'
-  | 'fill-null'
-  | 'cast'
-  | 'row-number';
+  | 'assert'
+  | 'chart'
+  | 'output';
 
 export interface NodePosition {
   x: number;
@@ -51,14 +50,21 @@ export interface NodeInstance {
   name: string;
   params: Record<string, unknown>;
   position: NodePosition;
+  /** 调试断点（F04）：调试模式下运行到此节点前暂停。 */
+  breakpoint?: boolean;
 }
 
-/** 一条连线: 从 source 节点的输出端口到 target 节点的输入端口。 */
+/**
+ * 一条连线: 从 source 节点的输出端口到 target 节点的输入端口。
+ * 单输出/单输入节点可省略端口（默认为 'out' / 'in'）。
+ */
 export interface Edge {
   id: string;
   source: string;
   target: string;
-  /** 多输入节点（如 join/union）用端口区分输入。M1 只有单输入, 默认为 'in'。 */
+  /** 源输出端口（branch 等多输出节点用，如 'true'/'false'）。 */
+  sourcePort?: string;
+  /** 目标输入端口（join 等多输入节点用，如 'in'/'in2'）。 */
   targetPort?: string;
 }
 
@@ -99,8 +105,15 @@ export interface RunRecord {
   finishedAt?: number;
   cancelled: boolean;
   nodeStates: Record<string, NodeRunInfo>;
-  /** 节点输出快照（行数上限内）。 */
+  /**
+   * 节点主输出快照（行数上限内）。
+   * 单输出节点 = 唯一输出；branch = 'true' 端口（匹配表）。
+   */
   outputs: Record<string, DataTable>;
+  /** 全端口输出快照：nodeId -> port -> table（多输出/多输入调试用）。 */
+  portOutputs: Record<string, Record<string, DataTable>>;
+  /** 调试模式下当前暂停所在的节点 id（无暂停时缺省）。 */
+  debugPausedAt?: string;
   /** 缓存命中证据（M4 填充）。 */
   cacheHits?: string[];
 }

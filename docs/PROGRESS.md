@@ -74,7 +74,29 @@
 ### 下一步
 1. 进入 M2（剩余 12 种节点：json-input/select-columns/sort/aggregate/join/union/dedupe/limit/sample/fill-null/cast/row-number；调试模式/断点/运行快照；列推断扩展到全部节点）
 
-## M2 完整编辑与执行（未开始）
+## M2 完整编辑与执行（进行中，2026-10-02）
+
+### 已完成
+- [x] 引擎：16 种节点全部实现（新增 json-input / synthetic-input / select-columns / branch / join / union / dedupe / aggregate / sort / limit / assert / chart）
+  - 多输入/多输出端口：`Edge.sourcePort/targetPort`；branch 返回 `{true,false}`；join/union 双输入 `in/in2`
+  - 调试模式 F04：`RunManager.start(graph, {debug})` 单并发 + 断点暂停/单步/继续；`NodeInstance.breakpoint`；`RunRecord.debugPausedAt`
+  - 运行快照：`RunRecord.portOutputs`（全端口输出）；运行历史保留最近 5 条，可切换查看
+  - 列推断扩展到全部 16 种节点 + 多输入端口（`inferInputColumns(graph, nodeId, port)`）
+  - 校验增强：非法端口/重复端口连线/union 列集不一致/join 键缺失/结构化参数解析/终端节点警告
+- [x] UI：节点面板按分组（输入/变换/输出）；画布多端口渲染与连线（端口标签）；检查器断点开关；
+      顶栏调试控制（调试开关/暂停/继续/单步）；运行历史下拉；branch 端口切换查看（匹配/不匹配）；
+      ChartView SVG 图表（柱状/折线/散点）；小地图；复制粘贴（Ctrl+C/V）；自动布局（拓扑分层）
+- [x] E2E 修复：join 参数名为 `keys`（非 `key`）；chart 默认 x/y 列改为空（原示例值导致校验失败）
+
+### 测试结果（本地，2026-10-02 全绿）
+- `lint` ✅ 0 错误；`typecheck` ✅；`build` ✅
+- `test:unit` ✅ 159 通过（新增 m2.test.ts 63 个）；覆盖率 statements 96.1% / branches 82.2% / functions 99.5%（门槛 85/80/85，达标）
+- `test:e2e` ✅ 9/9 通过：5 条 M1（无回归）+ 4 条 M2（join 多输入连线 / branch+chart 端口切换 / 调试断点暂停-单步-继续 / 复制粘贴+自动布局+小地图）
+
+### 下一步
+1. M2 收尾：文档更新（PROGRESS/DECISIONS/REQUIREMENTS）；本地 commit（不 push）
+2. 进入 M3（数据可靠性）
+
 ## M3 数据可靠性（未开始）
 ## M4 深层工程能力（未开始）
 ## M5 完整产品体验（未开始）

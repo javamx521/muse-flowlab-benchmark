@@ -26,8 +26,8 @@ async function nodeIds(page: Page): Promise<string[]> {
 
 /** 从源节点输出端口拖到目标节点输入端口，完成连线。 */
 async function connect(page: Page, sourceId: string, targetId: string) {
-  const out = page.getByTestId(`port-out-${sourceId}`)
-  const inp = page.getByTestId(`port-in-${targetId}`)
+  const out = page.getByTestId(`port-out-out-${sourceId}`)
+  const inp = page.getByTestId(`port-in-in-${targetId}`)
   const outBox = await out.boundingBox()
   const inBox = await inp.boundingBox()
   expect(outBox, '输出端口可见').not.toBeNull()

@@ -404,3 +404,32 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   .palette { flex-direction: row; flex-wrap: wrap; border-right: none; border-bottom: 1px solid var(--border); }
   .side { border-left: none; border-top: 1px solid var(--border); max-height: 220px; }
 }
+
+/* ===== M2 新增样式 ===== */
+.palette-group { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.4rem; }
+.palette-group h4 { margin: 0.35rem 0 0.1rem; font-size: 0.75rem; color: var(--muted); font-weight: 600; }
+.palette-tools { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
+
+.port-label { font-size: 10px; fill: var(--muted); pointer-events: none; }
+.node.debug-paused { stroke-width: 3.5; }
+
+.minimap {
+  position: absolute; right: 12px; bottom: 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: rgba(15, 23, 42, 0.85); pointer-events: none;
+}
+.minimap-bg { fill: transparent; }
+.minimap-node { fill: #334155; }
+.minimap-viewport { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+
+.debug-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.port-switch { display: inline-flex; gap: 4px; margin-left: 8px; }
+.port-switch button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.chart-wrap { overflow: auto; padding: 0.75rem; flex: 1; }
+.chart { width: 100%; max-width: 720px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; }
+.chart-axis { stroke: var(--muted); stroke-width: 1; }
+.chart-tick { font-size: 11px; fill: var(--muted); }
+.chart-bar { fill: var(--accent); opacity: 0.85; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart-point { fill: var(--accent); stroke: #fff; stroke-width: 1; }

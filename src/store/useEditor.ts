@@ -13,7 +13,7 @@ import type {
   WorkflowGraph,
 } from '../engine/types';
 import { getNodeDef, isNodeKind } from '../engine/nodes';
-import { canRun } from '../engine/graph';
+import { canRun, topoSort } from '../engine/graph';
 import { LocalBackend, RunManager } from '../engine/executor';
 import { WorkerBackend } from '../engine/workerBackend';
 import type { ExecutorBackend } from '../engine/executor';
@@ -33,7 +33,13 @@ export interface EditorState {
   selection: string[];
   viewport: Viewport;
   run: RunRecord | null;
+  /** 最近运行历史（M2 运行快照），最多保留 5 条。 */
+  runHistory: RunRecord[];
   running: boolean;
+  /** 调试模式开关（F04）。 */
+  debugMode: boolean;
+  /** 调试暂停所在的节点 id。 */
+  debugPausedAt: string | null;
   issues: GraphIssue[];
   saveStatus: 'saved' | 'saving' | 'error' | 'idle';
   seq: number;
@@ -46,15 +52,20 @@ type Action =
   | { t: 'moveNode'; id: string; x: number; y: number }
   | { t: 'moveNodes'; moves: { id: string; x: number; y: number }[] }
   | { t: 'deleteNodes'; ids: string[] }
-  | { t: 'connect'; source: string; target: string }
+  | { t: 'connect'; source: string; target: string; sourcePort?: string; targetPort?: string }
   | { t: 'deleteEdge'; edgeId: string }
   | { t: 'updateParam'; id: string; key: string; value: unknown }
   | { t: 'renameNode'; id: string; name: string }
+  | { t: 'toggleBreakpoint'; id: string }
   | { t: 'select'; ids: string[] }
   | { t: 'setViewport'; viewport: Viewport }
-  | { t: 'runStart' }
+  | { t: 'runStart'; debug: boolean }
   | { t: 'nodeState'; nodeId: string; info: NodeRunInfo }
   | { t: 'runEnd'; record: RunRecord }
+  | { t: 'debugPause'; nodeId: string | null }
+  | { t: 'setDebugMode'; debug: boolean }
+  | { t: 'selectRun'; runId: string | null }
+  | { t: 'paste'; nodes: NodeInstance[]; edges: { source: string; target: string; sourcePort?: string; targetPort?: string }[] }
   | { t: 'setIssues'; issues: GraphIssue[] }
   | { t: 'saveStatus'; status: EditorState['saveStatus'] }
   | { t: 'replaceGraph'; graph: WorkflowGraph }; // M3 快照/导入用
@@ -78,13 +89,23 @@ function reducer(state: EditorState, action: Action): EditorState {
     case 'setViewport':
       return { ...state, viewport: action.viewport };
     case 'runStart':
-      return { ...state, running: true };
+      return { ...state, running: true, debugPausedAt: null };
+    case 'debugPause':
+      return { ...state, debugPausedAt: action.nodeId };
+    case 'setDebugMode':
+      return { ...state, debugMode: action.debug };
+    case 'selectRun': {
+      const rec = state.runHistory.find((r) => r.runId === action.runId) ?? null;
+      return { ...state, run: rec };
+    }
     case 'nodeState': {
       if (!state.run) return state;
       return { ...state, run: { ...state.run, nodeStates: { ...state.run.nodeStates, [action.nodeId]: action.info } } };
     }
-    case 'runEnd':
-      return { ...state, running: false, run: action.record };
+    case 'runEnd': {
+      const history = [action.record, ...state.runHistory.filter((r) => r.runId !== action.record.runId)].slice(0, 5);
+      return { ...state, running: false, run: action.record, runHistory: history, debugPausedAt: null };
+    }
     case 'setIssues':
       return { ...state, issues: action.issues };
     case 'saveStatus':
@@ -143,12 +164,31 @@ function reducer(state: EditorState, action: Action): EditorState {
     }
     case 'connect': {
       if (action.source === action.target) return state;
-      const exists = graph.edges.some((e) => e.source === action.source && e.target === action.target);
+      const sPort = action.sourcePort ?? 'out';
+      const tPort = action.targetPort ?? 'in';
+      // 同源/同目标/同端口的重复连线直接忽略
+      const exists = graph.edges.some(
+        (e) => e.source === action.source && e.target === action.target &&
+          (e.sourcePort ?? 'out') === sPort && (e.targetPort ?? 'in') === tPort,
+      );
       if (exists) return state;
+      // 同一输入端口只允许一条连线：新连线替换旧连线（F02 重新连线）
+      const filtered = graph.edges.filter(
+        (e) => !(e.target === action.target && (e.targetPort ?? 'in') === tPort),
+      );
       edgeSeq += 1;
       const next: WorkflowGraph = bumpRevision({
         ...graph,
-        edges: [...graph.edges, { id: `e${Date.now().toString(36)}_${edgeSeq}`, source: action.source, target: action.target, targetPort: 'in' }],
+        edges: [
+          ...filtered,
+          {
+            id: `e${Date.now().toString(36)}_${edgeSeq}`,
+            source: action.source,
+            target: action.target,
+            sourcePort: sPort === 'out' ? undefined : sPort,
+            targetPort: tPort === 'in' ? undefined : tPort,
+          },
+        ],
       });
       return { ...state, doc: { ...doc, graph: next } };
     }
@@ -172,6 +212,48 @@ function reducer(state: EditorState, action: Action): EditorState {
       };
       return { ...state, doc: { ...doc, graph: next } };
     }
+    case 'toggleBreakpoint': {
+      const next: WorkflowGraph = bumpRevision({
+        ...graph,
+        nodes: graph.nodes.map((n) =>
+          n.id === action.id ? { ...n, breakpoint: n.breakpoint === true ? undefined : true } : n,
+        ),
+      });
+      return { ...state, doc: { ...doc, graph: next } };
+    }
+    case 'paste': {
+      // 粘贴：生成新 id，重建内部边，整体偏移避免重叠
+      const idMap = new Map<string, string>();
+      for (const n of action.nodes) {
+        nodeSeq += 1;
+        idMap.set(n.id, `n${Date.now().toString(36)}_${nodeSeq}`);
+      }
+      const nodes: NodeInstance[] = action.nodes.map((n) => ({
+        ...n,
+        id: idMap.get(n.id)!,
+        params: JSON.parse(JSON.stringify(n.params)) as Record<string, unknown>,
+        position: { x: n.position.x + 40, y: n.position.y + 40 },
+      }));
+      const sel = new Set(action.nodes.map((n) => n.id));
+      const edges = action.edges
+        .filter((e) => sel.has(e.source) && sel.has(e.target))
+        .map((e) => {
+          edgeSeq += 1;
+          return {
+            id: `e${Date.now().toString(36)}_${edgeSeq}`,
+            source: idMap.get(e.source)!,
+            target: idMap.get(e.target)!,
+            sourcePort: e.sourcePort,
+            targetPort: e.targetPort,
+          };
+        });
+      const next: WorkflowGraph = bumpRevision({
+        ...graph,
+        nodes: [...graph.nodes, ...nodes],
+        edges: [...graph.edges, ...edges],
+      });
+      return { ...state, doc: { ...doc, graph: next }, selection: nodes.map((n) => n.id), seq: state.seq + nodes.length };
+    }
     default:
       return state;
   }
@@ -184,7 +266,10 @@ const initialState: EditorState = {
   selection: [],
   viewport: { x: 40, y: 40, k: 1 },
   run: null,
+  runHistory: [],
   running: false,
+  debugMode: false,
+  debugPausedAt: null,
   issues: [],
   saveStatus: 'idle',
   seq: 0,
@@ -195,16 +280,56 @@ export interface EditorActions {
   moveNode(id: string, x: number, y: number): void;
   moveNodes(moves: { id: string; x: number; y: number }[]): void;
   deleteSelection(): void;
-  connect(source: string, target: string): void;
+  connect(source: string, target: string, sourcePort?: string, targetPort?: string): void;
   deleteEdge(edgeId: string): void;
   updateParam(id: string, key: string, value: unknown): void;
   renameNode(id: string, name: string): void;
+  toggleBreakpoint(id: string): void;
+  copySelection(): { nodes: NodeInstance[]; edges: { source: string; target: string; sourcePort?: string; targetPort?: string }[] } | null;
+  paste(nodes: NodeInstance[], edges: { source: string; target: string; sourcePort?: string; targetPort?: string }[]): void;
+  autoLayout(): void;
   select(ids: string[]): void;
   setViewport(v: Viewport): void;
-  run(): Promise<void>;
+  setDebugMode(debug: boolean): void;
+  run(opts?: { debug?: boolean }): Promise<void>;
+  pauseDebug(): void;
+  resumeDebug(): void;
+  stepDebug(): void;
   cancelRun(): void;
+  selectRun(runId: string | null): void;
   refreshIssues(): void;
   saveNow(): Promise<void>;
+}
+
+/** 自动布局：按拓扑分层，层内垂直排列（F02）。环内节点保持原位。 */
+function layoutGraph(graph: WorkflowGraph): WorkflowGraph {
+  const { order } = topoSort(graph);
+  const layer = new Map<string, number>();
+  for (const id of order) {
+    let l = 0;
+    for (const e of graph.edges) {
+      if (e.target === id) l = Math.max(l, (layer.get(e.source) ?? 0) + 1);
+    }
+    layer.set(id, l);
+  }
+  const byLayer = new Map<number, string[]>();
+  for (const id of order) {
+    const l = layer.get(id) ?? 0;
+    const arr = byLayer.get(l);
+    if (arr) arr.push(id);
+    else byLayer.set(l, [id]);
+  }
+  const pos = new Map<string, { x: number; y: number }>();
+  for (const [l, ids] of [...byLayer.entries()].sort((a, b) => a[0] - b[0])) {
+    ids.forEach((id, i) => pos.set(id, { x: 80 + l * 300, y: 80 + i * 160 }));
+  }
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) => {
+      const p = pos.get(n.id);
+      return p ? { ...n, position: p } : n;
+    }),
+  };
 }
 
 function makeBackend(): ExecutorBackend {
@@ -230,6 +355,7 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
     managerRef.current = new RunManager(makeBackend(), {
       onNodeState: (nodeId, info) => dispatch({ t: 'nodeState', nodeId, info }),
       onRunEnd: (record) => dispatch({ t: 'runEnd', record }),
+      onDebugPause: (nodeId) => dispatch({ t: 'debugPause', nodeId }),
     });
   }
 
@@ -297,10 +423,28 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
       deleteSelection: () => {
         if (state.selection.length > 0) dispatch({ t: 'deleteNodes', ids: state.selection });
       },
-      connect: (source, target) => dispatch({ t: 'connect', source, target }),
+      connect: (source, target, sourcePort, targetPort) => dispatch({ t: 'connect', source, target, sourcePort, targetPort }),
       deleteEdge: (edgeId) => dispatch({ t: 'deleteEdge', edgeId }),
       updateParam: (id, key, value) => dispatch({ t: 'updateParam', id, key, value }),
       renameNode: (id, name) => dispatch({ t: 'renameNode', id, name }),
+      toggleBreakpoint: (id) => dispatch({ t: 'toggleBreakpoint', id }),
+      copySelection: () => {
+        const doc = docRef.current;
+        if (!doc || state.selection.length === 0) return null;
+        const sel = new Set(state.selection);
+        const nodes = doc.graph.nodes.filter((n) => sel.has(n.id));
+        const edges = doc.graph.edges
+          .filter((e) => sel.has(e.source) && sel.has(e.target))
+          .map((e) => ({ source: e.source, target: e.target, sourcePort: e.sourcePort, targetPort: e.targetPort }));
+        return { nodes, edges };
+      },
+      paste: (nodes, edges) => dispatch({ t: 'paste', nodes, edges }),
+      autoLayout: () => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const next = layoutGraph(doc.graph);
+        dispatch({ t: 'replaceGraph', graph: { ...next, revision: next.revision + 1 } });
+      },
       select: (ids) => dispatch({ t: 'select', ids }),
       setViewport: (v) => dispatch({ t: 'setViewport', viewport: v }),
       refreshIssues: () => {
@@ -318,18 +462,30 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
           dispatch({ t: 'saveStatus', status: 'error' });
         }
       },
-      run: async () => {
+      run: async (opts) => {
         const doc = docRef.current;
         if (!doc || state.running) return;
         const { ok, issues } = canRun(doc.graph);
         dispatch({ t: 'setIssues', issues });
         if (!ok) return;
-        dispatch({ t: 'runStart' });
-        await managerRef.current!.start(doc.graph);
+        const debug = opts?.debug ?? state.debugMode;
+        dispatch({ t: 'runStart', debug });
+        await managerRef.current!.start(doc.graph, { debug });
       },
+      setDebugMode: (debug) => dispatch({ t: 'setDebugMode', debug }),
+      pauseDebug: () => managerRef.current?.pauseDebug(),
+      resumeDebug: () => {
+        dispatch({ t: 'debugPause', nodeId: null });
+        managerRef.current?.resumeDebug();
+      },
+      stepDebug: () => {
+        dispatch({ t: 'debugPause', nodeId: null });
+        managerRef.current?.stepDebug();
+      },
+      selectRun: (runId) => dispatch({ t: 'selectRun', runId }),
       cancelRun: () => managerRef.current?.cancel(),
     }),
-    [state.running, state.selection, storage],
+    [state.running, state.selection, state.debugMode, storage],
   );
 
   return { state, actions };

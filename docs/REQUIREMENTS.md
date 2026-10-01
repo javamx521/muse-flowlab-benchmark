@@ -27,7 +27,8 @@
 | 需求 | 状态 | 实现位置 | 测试证据 |
 |---|---|---|---|
 | 4 种节点（csv-input/filter/computed-column/output） | ✅ M1 完成 | `src/engine/nodes.ts` | `tests/unit/engine.test.ts`（节点定义/执行）；E2E m1-flow 业务链 |
-| 剩余 12 种节点 | 未实现 | M2 | — |
+| 剩余 12 种节点 | ✅ M2 完成 | `src/engine/nodes.ts` | `tests/unit/m2.test.ts`（63 个）；E2E m2-flow（join/branch/chart） |
+| 多输入/多输出端口、端口连线、复制粘贴、自动布局、小地图 | ✅ M2 完成 | `src/components/Canvas.tsx`、`src/store/useEditor.ts` | E2E m2-flow（多输入连线/复制粘贴/自动布局/小地图） |
 
 ## F03 图与数据语义
 
@@ -36,7 +37,7 @@
 | 数据语义（null vs ''、严格类型、有限数/安全整数拒绝、公式注入防护） | ✅ M1 完成 | `src/engine/dataModel.ts`、`csv.ts` | `tests/unit/engine.test.ts`（数据语义/CSV/公式注入） |
 | 确定性拓扑排序、环检测、运行前校验（缺失输入/悬空边/重复连线） | ✅ M1 完成 | `src/engine/graph.ts`（topoSort/validateGraph/canRun） | 单元测试；E2E 删除节点/问题跳转 |
 | 运行前识别失效字段引用（静态列推断） | ✅ M1 完成 | `inferOutputColumns`/`inferInputColumns` | 单元测试"列推断"；E2E 错误修复流 |
-| 列推断扩展到全部 16 种节点/多输入 | 未实现 | M2 | — |
+| 列推断扩展到全部 16 种节点/多输入 | ✅ M2 完成 | `src/engine/graph.ts` | `tests/unit/m2.test.ts`（列推断/校验）；E2E chart 字段校验 |
 
 ## F04 真实执行与调试
 
@@ -44,7 +45,7 @@
 |---|---|---|---|
 | Worker 内真实执行、节点状态机、失败下游 skipped | ✅ M1 完成 | `src/engine/executor.ts`、`worker.ts` | 单元测试（执行器/取消语义）；E2E 业务链真实计算断言 |
 | runId/graphRevision 快照、运行隔离、旧版本标注、取消 | ✅ M1 完成 | `RunManager`、`useEditor.ts`、`EditorPage.tsx` | 单元测试；E2E 运行隔离 |
-| 调试模式/断点/运行快照 | 未实现 | M2 | — |
+| 调试模式/断点/运行快照 | ✅ M2 完成 | `src/engine/executor.ts`（RunManager 调试）、`src/pages/EditorPage.tsx` | `tests/unit/m2.test.ts`（调试暂停/单步）；E2E m2-flow 调试模式 |
 
 ## F05 表达式与导入安全
 

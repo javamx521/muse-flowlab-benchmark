@@ -75,3 +75,37 @@
 - 运行请求固定 `runId` + `graphRevision`；运行中编辑图会使 revision 变化，
   结果面板标注"结果对应旧版本 rX，当前 rY"徽标；取消时 terminate Worker 并按 runId 丢弃迟到消息。
 - 状态：已采用；M4 增量缓存沿用 revision 语义。
+
+## D-014 节点清单以任务书为准（M2）
+- 任务书 16 种节点：csv-input / json-input / synthetic-input / select-columns / branch / filter /
+  computed-column / join / union / dedupe / aggregate / sort / limit / assert / chart / output。
+- 早期草案中的 sample / fill-null / cast / row-number 未实现（任务书无此要求）。
+- 状态：已采用。
+
+## D-015 多端口语义（M2）
+- `Edge.sourcePort/targetPort` 可选；缺省为 `out`/`in`（向后兼容 M1 数据）。
+- branch 输出端口 `true`/`false`，主输出为 `true`；下游边按 `sourcePort` 取数。
+- join/union 输入端口 `in`/`in2`；UI 同一输入端口的新连线替换旧连线（重新连线语义），
+  校验层仍保留"单输入端口多条连线"报错以覆盖导入数据。
+- 状态：已采用。
+
+## D-016 调试模式单并发（M2，F04）
+- `RunManager.start(graph, {debug:true})` 强制 maxConcurrency=1；断点在节点执行前触发暂停；
+  `pauseDebug()` 在下一个节点边界暂停；`stepDebug()` 单步一个节点后再次暂停。
+- 暂停时 UI 高亮节点（`debug-paused` 样式 + `debug-paused-badge` 徽标）；继续/单步后清除暂停态。
+- 状态：已采用。
+
+## D-017 运行历史保留 5 条（M2）
+- `runHistory` 最多保留最近 5 条 `RunRecord`（含 portOutputs 全端口输出）；
+  下拉切换查看历史快照；只有 1 条时不显示选择器。
+- 状态：已采用。
+
+## D-018 合成数据列类型启发式（M2）
+- synthetic-input 按列名启发式推断类型（id/age/price→整数等），LCG 确定性生成；
+  规则写在节点 help 文本中，避免"魔法"行为。
+- 状态：已采用。
+
+## D-019 图表默认字段留空（M2，E2E 实测）
+- chart 的 xColumn/yColumn 默认值原为示例值（city/amount），导致新节点校验失败、运行按钮禁用；
+  改为空字符串 + placeholder 示例，由用户填写。
+- 状态：已采用。

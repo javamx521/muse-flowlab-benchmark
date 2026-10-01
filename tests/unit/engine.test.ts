@@ -5,7 +5,14 @@
 import { describe, expect, it } from 'vitest';
 import { parseCsv, csvToTable, tableToCsv, escapeFormulaCell } from '../../src/engine/csv';
 import { compileExpr, ExprError, listFunctions } from '../../src/engine/expressions';
-import { getNodeDef, listNodeDefs } from '../../src/engine/nodes';
+import { getNodeDef, listNodeDefs, isSingleTable } from '../../src/engine/nodes';
+import type { DataTable } from '../../src/engine/types';
+
+/** 取单表输出（多输出节点测试用 normalizeOutputs）。 */
+function one(r: DataTable | Record<string, DataTable>): DataTable {
+  if (!isSingleTable(r)) throw new Error('期望单表输出');
+  return r;
+}
 import { topoSort, validateGraph, canRun, inferOutputColumns, inferInputColumns } from '../../src/engine/graph';
 import { LocalBackend, RunManager } from '../../src/engine/executor';
 import { strictEquals, keyHash, compareCells, toNumberStrict } from '../../src/engine/dataModel';
@@ -191,7 +198,7 @@ describe('节点执行', () => {
 
   it('csv-input 解析真实 CSV', () => {
     const def = getNodeDef('csv-input');
-    const out = def.execute({ csvText: 'a,b\n1,x\n2,y\n' }, {});
+    const out = one(def.execute({ csvText: 'a,b\n1,x\n2,y\n' }, {}));
     expect(out.columns).toEqual(['a', 'b']);
     expect(out.rows).toHaveLength(2);
     expect(out.rows[0]).toEqual({ a: 1, b: 'x' });
@@ -199,7 +206,7 @@ describe('节点执行', () => {
 
   it('filter 按表达式过滤', () => {
     const def = getNodeDef('filter');
-    const out = def.execute({ condition: '$age >= 18 && $city == "北京"' }, { in: table });
+    const out = one(def.execute({ condition: '$age >= 18 && $city == "北京"' }, { in: table }));
     expect(out.rows).toHaveLength(2);
     expect(out.rows.map((r) => r['name'])).toEqual(['张三', '王五']);
   });
@@ -212,14 +219,14 @@ describe('节点执行', () => {
   it('computed-column 新增列', () => {
     const def = getNodeDef('computed-column');
     const t2 = { columns: ['price', 'qty'], rows: [{ price: 1050, qty: 3 }] };
-    const out = def.execute({ column: 'total', expression: '$price * $qty' }, { in: t2 });
+    const out = one(def.execute({ column: 'total', expression: '$price * $qty' }, { in: t2 }));
     expect(out.columns).toContain('total');
     expect(out.rows[0]!['total']).toBe(3150); // 整数分计算，无浮点误差
   });
 
   it('computed-column 覆盖已有列', () => {
     const def = getNodeDef('computed-column');
-    const out = def.execute({ column: 'age', expression: '$age + 1' }, { in: table });
+    const out = one(def.execute({ column: 'age', expression: '$age + 1' }, { in: table }));
     expect(out.columns).toEqual(['name', 'age', 'city']);
     expect(out.rows[0]!['age']).toBe(29);
   });
@@ -231,7 +238,7 @@ describe('节点执行', () => {
 
   it('output 透传输入', () => {
     const def = getNodeDef('output');
-    expect(def.execute({}, { in: table }).rows).toHaveLength(3);
+    expect(one(def.execute({}, { in: table })).rows).toHaveLength(3);
   });
 
   it('未知节点类型抛错', () => {

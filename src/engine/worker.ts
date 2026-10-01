@@ -2,7 +2,7 @@
  * 计算 Worker：节点纯函数在此线程执行。
  * 注意：此文件不得引用 DOM / window，只能用引擎纯模块。
  */
-import { getNodeDef } from './nodes';
+import { getNodeDef, normalizeOutputs } from './nodes';
 import type { ExecuteRequest, ExecuteResponse } from './executor';
 
 self.onmessage = (ev: MessageEvent) => {
@@ -15,8 +15,8 @@ self.onmessage = (ev: MessageEvent) => {
   };
   try {
     const def = getNodeDef(req.kind);
-    const table = def.execute(req.params, req.inputs);
-    respond({ runId: req.runId, nodeId: req.nodeId, ok: true, table, durationMs: Date.now() - started });
+    const tables = normalizeOutputs(def, def.execute(req.params, req.inputs));
+    respond({ runId: req.runId, nodeId: req.nodeId, ok: true, tables, durationMs: Date.now() - started });
   } catch (err) {
     respond({
       runId: req.runId,

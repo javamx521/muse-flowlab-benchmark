@@ -12,7 +12,7 @@ import type {
   RunRecord,
   WorkflowGraph,
 } from './types';
-import { getNodeDef } from './nodes';
+import { getNodeDef, normalizeOutputs, primaryOutputPort } from './nodes';
 import { topoSort, upstreamNodeIds, canRun } from './graph';
 
 export interface ExecuteRequest {
@@ -28,7 +28,10 @@ export interface ExecuteResponse {
   runId: string;
   nodeId: string;
   ok: boolean;
+  /** 主输出表（向后兼容；单输出节点用）。 */
   table?: DataTable;
+  /** 全端口输出（多输出节点用；优先于 table）。 */
+  tables?: Record<string, DataTable>;
   error?: string;
   durationMs: number;
 }
@@ -52,8 +55,8 @@ export class LocalBackend implements ExecutorBackend {
     }
     try {
       const def = getNodeDef(req.kind);
-      const table = def.execute(req.params, req.inputs);
-      return { runId: req.runId, nodeId: req.nodeId, ok: true, table, durationMs: Date.now() - started };
+      const tables = normalizeOutputs(def, def.execute(req.params, req.inputs));
+      return { runId: req.runId, nodeId: req.nodeId, ok: true, tables, durationMs: Date.now() - started };
     } catch (err) {
       return {
         runId: req.runId,
@@ -77,6 +80,13 @@ export class LocalBackend implements ExecutorBackend {
 export interface RunCallbacks {
   onNodeState?: (nodeId: string, info: NodeRunInfo) => void;
   onRunEnd?: (record: RunRecord) => void;
+  /** 调试模式暂停时触发（节点执行前）。 */
+  onDebugPause?: (nodeId: string) => void;
+}
+
+export interface RunOptions {
+  /** 调试模式：确定性单并发 + 支持断点/单步/暂停/继续。 */
+  debug?: boolean;
 }
 
 let runSeq = 0;
@@ -90,6 +100,11 @@ export function newRunId(): string {
 export class RunManager {
   private currentRunId: string | null = null;
   private cancelled = false;
+  // 调试模式状态（F04）
+  private debug = false;
+  private debugWaiter: { resolve: () => void } | null = null;
+  private stepOnce = false;
+  private pauseRequested = false;
 
   constructor(
     private backend: ExecutorBackend,
@@ -100,16 +115,61 @@ export class RunManager {
     return this.currentRunId;
   }
 
+  /** 是否处于调试暂停中。 */
+  get debugPaused(): boolean {
+    return this.debugWaiter !== null;
+  }
+
   /** 取消当前运行：终止实际任务，节点标记为 cancelled。 */
   cancel(): void {
     if (!this.currentRunId) return;
     this.cancelled = true;
+    // 调试暂停中取消：先放行等待，避免死锁
+    this.debugWaiter?.resolve();
+    this.debugWaiter = null;
     this.backend.cancel();
   }
 
-  async start(graph: WorkflowGraph, opts: { debug?: boolean } = {}): Promise<RunRecord> {
+  /** 调试：请求在下一个节点边界暂停。 */
+  pauseDebug(): void {
+    this.pauseRequested = true;
+  }
+
+  /** 调试：继续执行，直到下一个断点。 */
+  resumeDebug(): void {
+    this.stepOnce = false;
+    this.debugWaiter?.resolve();
+    this.debugWaiter = null;
+  }
+
+  /** 调试：单步执行一个节点后再次暂停。 */
+  stepDebug(): void {
+    this.stepOnce = true;
+    this.debugWaiter?.resolve();
+    this.debugWaiter = null;
+  }
+
+  /** 调试暂停检查：返回 true 表示本次应在节点执行前暂停。 */
+  private shouldDebugPause(node: NodeInstance): boolean {
+    if (!this.debug) return false;
+    if (this.pauseRequested) {
+      this.pauseRequested = false;
+      return true;
+    }
+    if (this.stepOnce) {
+      this.stepOnce = false;
+      return true;
+    }
+    return node.breakpoint === true;
+  }
+
+  async start(graph: WorkflowGraph, opts: RunOptions = {}): Promise<RunRecord> {
     if (this.currentRunId) throw new Error('已有运行在进行中');
-    void opts;
+    this.debug = opts.debug === true;
+    this.stepOnce = false;
+    // start 前调用的 pauseDebug 应生效（不清）；非调试模式则清除残留
+    if (!this.debug) this.pauseRequested = false;
+    this.debugWaiter = null;
 
     const check = canRun(graph);
     if (!check.ok) {
@@ -129,6 +189,7 @@ export class RunManager {
       cancelled: false,
       nodeStates: {},
       outputs: {},
+      portOutputs: {},
     };
     const nodeById = new Map<string, NodeInstance>(snapshot.nodes.map((n) => [n.id, n]));
     for (const n of snapshot.nodes) {
@@ -172,11 +233,24 @@ export class RunManager {
         let inputRows = 0;
         for (const edge of snapshot.edges.filter((e) => e.target === nodeId)) {
           const port = edge.targetPort ?? 'in';
-          const table = record.outputs[edge.source];
+          // 按源输出端口取表（branch 等多输出节点）
+          const table = record.portOutputs[edge.source]?.[edge.sourcePort ?? 'out'];
           if (table) {
             inputs[port] = table;
             inputRows += table.rows.length;
           }
+        }
+        // 调试模式：节点边界暂停（断点 / 单步 / 外部暂停请求）
+        if (this.shouldDebugPause(node)) {
+          record.debugPausedAt = nodeId;
+          emit(nodeId, { status: 'pending', startedAt: Date.now() });
+          this.callbacks.onDebugPause?.(nodeId);
+          await new Promise<void>((resolve) => {
+            this.debugWaiter = { resolve };
+          });
+          this.debugWaiter = null;
+          record.debugPausedAt = undefined;
+          if (this.cancelled || this.currentRunId !== runId) break;
         }
         emit(nodeId, { status: 'running', inputRows, startedAt: Date.now() });
         const t0 = Date.now();
@@ -196,7 +270,7 @@ export class RunManager {
           emit(nodeId, { status: 'cancelled', durationMs: Date.now() - t0, finishedAt: Date.now() });
           continue;
         }
-        if (!resp.ok || !resp.table) {
+        if (!resp.ok || (!resp.tables && !resp.table)) {
           failed.add(nodeId);
           emit(nodeId, {
             status: 'failed',
@@ -206,10 +280,15 @@ export class RunManager {
           });
           continue;
         }
-        record.outputs[nodeId] = resp.table;
+        // 归一化多端口输出：portOutputs 存全端口，outputs 存主输出（向后兼容）
+        const def = getNodeDef(node.kind);
+        const tables = resp.tables ?? (resp.table ? { [primaryOutputPort(def)]: resp.table } : {});
+        record.portOutputs[nodeId] = tables;
+        const primary = tables[primaryOutputPort(def)];
+        if (primary) record.outputs[nodeId] = primary;
         emit(nodeId, {
           status: 'ok',
-          outputRows: resp.table.rows.length,
+          outputRows: primary?.rows.length ?? 0,
           durationMs: resp.durationMs,
           finishedAt: Date.now(),
         });

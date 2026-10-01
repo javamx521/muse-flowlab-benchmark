@@ -11,6 +11,7 @@ interface Props {
   node: NodeInstance | null;
   onUpdateParam(id: string, key: string, value: unknown): void;
   onRename(id: string, name: string): void;
+  onToggleBreakpoint(id: string): void;
 }
 
 function FieldInput(props: { field: ParamField; value: unknown; onChange(v: unknown): void; testId: string }) {
@@ -90,20 +91,27 @@ function FieldInput(props: { field: ParamField; value: unknown; onChange(v: unkn
       return (
         <div className="field">
           <label htmlFor={testId}>{field.label}</label>
-          <input id={testId} data-testid={testId} type="text" value={str} onChange={(e) => onChange(e.target.value)} />
+          <input
+            id={testId}
+            data-testid={testId}
+            type="text"
+            value={str}
+            placeholder={field.placeholder}
+            onChange={(e) => onChange(e.target.value)}
+          />
           {field.help && <p className="help">{field.help}</p>}
         </div>
       );
   }
 }
 
-export default function Inspector({ node, onUpdateParam, onRename }: Props) {
+export default function Inspector({ node, onUpdateParam, onRename, onToggleBreakpoint }: Props) {
   if (!node) {
     return (
       <div className="inspector" data-testid="inspector-empty">
         <h3>检查器</h3>
         <p className="muted">点击画布上的节点以编辑参数；从左侧面板添加节点。</p>
-        <h4>节点类型（M1：{listNodeDefs().length} 种）</h4>
+        <h4>节点类型（{listNodeDefs().length} 种）</h4>
         <ul className="node-list">
           {listNodeDefs().map((d) => (
             <li key={d.kind}>
@@ -137,6 +145,17 @@ export default function Inspector({ node, onUpdateParam, onRename }: Props) {
       <p className="muted small">
         类型：{def.title} · {def.category}
       </p>
+      <div className="field">
+        <label>
+          <input
+            data-testid="breakpoint-toggle"
+            type="checkbox"
+            checked={node.breakpoint === true}
+            onChange={() => onToggleBreakpoint(node.id)}
+          />{' '}
+          断点（调试模式下运行到此节点前暂停）
+        </label>
+      </div>
       {def.params.map((f) => (
         <FieldInput
           key={f.key}
