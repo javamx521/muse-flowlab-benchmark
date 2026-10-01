@@ -1,7 +1,14 @@
 /**
- * 编辑器状态（M1）。
+ * 编辑器状态（M3）。
  * useReducer 管理语义级 action；自动保存防抖 800ms，只有持久化成功后才标记"已保存"。
  * 运行通过 RunManager + WorkerBackend（浏览器）执行。
+ *
+ * M3 新增：
+ * - F06 撤销/重做：语义编辑前压图快照（UndoHistory），连续拖拽合并为一条，
+ *   新编辑清空 redo，纯选择/视口/运行不入历史；
+ * - F07 多标签页：保存带乐观并发 rev，冲突时弹冲突解决对话框；
+ * - F07 快照：命名快照的创建/删除/恢复（恢复可撤销）；
+ * - F07 导出：exportProject() 返回工程 JSON。
  */
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import type {
@@ -17,13 +24,24 @@ import { canRun, topoSort } from '../engine/graph';
 import { LocalBackend, RunManager } from '../engine/executor';
 import { WorkerBackend } from '../engine/workerBackend';
 import type { ExecutorBackend } from '../engine/executor';
-import { LocalStorageBackend, newDocument } from './document';
-import type { ProjectDocument, StorageBackend } from './document';
+import { newDocument } from './document';
+import { ConflictError } from './document';
+import type { ProjectDocument, RevisionedStorageBackend } from './document';
+import { UndoHistory } from './history';
+import { newSnapshotId } from './snapshots';
+import type { NamedSnapshot } from './document';
+import { serializeExport } from './exportImport';
+import { getBackend } from './appStores';
 
 export interface Viewport {
   x: number;
   y: number;
   k: number;
+}
+
+export interface ConflictInfo {
+  currentRev: number;
+  serverUpdatedAt: string;
 }
 
 export interface EditorState {
@@ -43,11 +61,18 @@ export interface EditorState {
   issues: GraphIssue[];
   saveStatus: 'saved' | 'saving' | 'error' | 'idle';
   seq: number;
+  /** F06 撤销/重做可用性。 */
+  canUndo: boolean;
+  canRedo: boolean;
+  /** F07 多标签页写入冲突；非 null 时自动保存暂停，等待用户解决。 */
+  conflict: ConflictInfo | null;
 }
 
 type Action =
   | { t: 'loaded'; doc: ProjectDocument }
   | { t: 'loadError'; error: string }
+  | { t: 'setDoc'; doc: ProjectDocument }
+  | { t: 'historySync'; canUndo: boolean; canRedo: boolean }
   | { t: 'addNode'; kind: NodeKind; x: number; y: number }
   | { t: 'moveNode'; id: string; x: number; y: number }
   | { t: 'moveNodes'; moves: { id: string; x: number; y: number }[] }
@@ -68,7 +93,9 @@ type Action =
   | { t: 'paste'; nodes: NodeInstance[]; edges: { source: string; target: string; sourcePort?: string; targetPort?: string }[] }
   | { t: 'setIssues'; issues: GraphIssue[] }
   | { t: 'saveStatus'; status: EditorState['saveStatus'] }
-  | { t: 'replaceGraph'; graph: WorkflowGraph }; // M3 快照/导入用
+  | { t: 'conflict'; info: ConflictInfo }
+  | { t: 'conflictClear' }
+  | { t: 'replaceGraph'; graph: WorkflowGraph }; // 撤销/重做/快照恢复/自动布局用
 
 let nodeSeq = 0;
 let edgeSeq = 0;
@@ -81,9 +108,20 @@ function reducer(state: EditorState, action: Action): EditorState {
   const doc = state.doc;
   switch (action.t) {
     case 'loaded':
-      return { ...state, doc: action.doc, loading: false, loadError: null, seq: action.doc.graph.nodes.length };
+      return {
+        ...state, doc: action.doc, loading: false, loadError: null,
+        seq: action.doc.graph.nodes.length, conflict: null, canUndo: false, canRedo: false,
+      };
     case 'loadError':
       return { ...state, loading: false, loadError: action.error };
+    case 'setDoc':
+      return { ...state, doc: action.doc };
+    case 'historySync':
+      return { ...state, canUndo: action.canUndo, canRedo: action.canRedo };
+    case 'conflict':
+      return { ...state, conflict: action.info };
+    case 'conflictClear':
+      return { ...state, conflict: null };
     case 'select':
       return { ...state, selection: action.ids };
     case 'setViewport':
@@ -273,12 +311,17 @@ const initialState: EditorState = {
   issues: [],
   saveStatus: 'idle',
   seq: 0,
+  canUndo: false,
+  canRedo: false,
+  conflict: null,
 };
 
 export interface EditorActions {
   addNode(kind: NodeKind, x?: number, y?: number): void;
   moveNode(id: string, x: number, y: number): void;
   moveNodes(moves: { id: string; x: number; y: number }[]): void;
+  beginDrag(): void;
+  endDrag(): void;
   deleteSelection(): void;
   connect(source: string, target: string, sourcePort?: string, targetPort?: string): void;
   deleteEdge(edgeId: string): void;
@@ -288,6 +331,8 @@ export interface EditorActions {
   copySelection(): { nodes: NodeInstance[]; edges: { source: string; target: string; sourcePort?: string; targetPort?: string }[] } | null;
   paste(nodes: NodeInstance[], edges: { source: string; target: string; sourcePort?: string; targetPort?: string }[]): void;
   autoLayout(): void;
+  undo(): void;
+  redo(): void;
   select(ids: string[]): void;
   setViewport(v: Viewport): void;
   setDebugMode(debug: boolean): void;
@@ -299,6 +344,16 @@ export interface EditorActions {
   selectRun(runId: string | null): void;
   refreshIssues(): void;
   saveNow(): Promise<void>;
+  /** F07 快照 */
+  createSnapshot(name: string): void;
+  deleteSnapshot(snapshotId: string): void;
+  restoreSnapshot(snapshotId: string): void;
+  /** F07 导出：返回工程 JSON 文本。 */
+  exportProject(): string | null;
+  /** F07 冲突解决 */
+  reloadServer(): Promise<void>;
+  forceSave(): Promise<void>;
+  saveAsCopy(newId: string): Promise<void>;
 }
 
 /** 自动布局：按拓扑分层，层内垂直排列（F02）。环内节点保持原位。 */
@@ -343,13 +398,19 @@ function makeBackend(): ExecutorBackend {
   return new LocalBackend();
 }
 
-export function useEditor(projectId: string, backend?: StorageBackend, fallbackName?: string) {
+export function useEditor(projectId: string, backend?: RevisionedStorageBackend, fallbackName?: string) {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const storage = useMemo(() => backend ?? new LocalStorageBackend(), [backend]);
+  const storage = useMemo(() => backend ?? getBackend(), [backend]);
   const managerRef = useRef<RunManager | null>(null);
   const saveTimer = useRef<number | null>(null);
   const docRef = useRef<ProjectDocument | null>(null);
   docRef.current = state.doc;
+  const historyRef = useRef<UndoHistory | null>(null);
+  if (!historyRef.current) historyRef.current = new UndoHistory();
+  const dragKeyRef = useRef<string | null>(null);
+  const revRef = useRef<number>(0);
+  const conflictRef = useRef<ConflictInfo | null>(null);
+  conflictRef.current = state.conflict;
 
   if (!managerRef.current) {
     managerRef.current = new RunManager(makeBackend(), {
@@ -359,19 +420,44 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
     });
   }
 
-  // 加载
+  const syncHistory = useCallback(() => {
+    const h = historyRef.current!;
+    dispatch({ t: 'historySync', canUndo: h.canUndo, canRedo: h.canRedo });
+  }, []);
+
+  /**
+   * 语义编辑入口：先压历史再 dispatch。
+   * coalesceKey 相同则合并（拖拽会话 / 连续键入）；maxAgeMs 限制合并时间窗口。
+   */
+  const edit = useCallback(
+    (action: Action, label: string, coalesceKey: string | null = null, maxAgeMs: number | null = null) => {
+      const doc = docRef.current;
+      if (doc) {
+        historyRef.current!.push(doc.graph, label, coalesceKey, maxAgeMs);
+        syncHistory();
+      }
+      dispatch(action);
+    },
+    [syncHistory],
+  );
+
+  // 加载（含 rev，供多标签页冲突检测）
   useEffect(() => {
     let alive = true;
-    storage.load(projectId).then(
-      (doc) => {
+    historyRef.current!.clear();
+    storage.loadWithRev(projectId).then(
+      (rec) => {
         if (!alive) return;
-        if (doc) {
-          dispatch({ t: 'loaded', doc });
-          dispatch({ t: 'setIssues', issues: canRun(doc.graph).issues });
+        if (rec) {
+          revRef.current = rec.rev;
+          dispatch({ t: 'loaded', doc: rec.doc });
+          dispatch({ t: 'setIssues', issues: canRun(rec.doc.graph).issues });
         } else {
+          revRef.current = 0;
           const fresh = newDocument(projectId, fallbackName ?? '未命名项目');
           dispatch({ t: 'loaded', doc: fresh });
         }
+        syncHistory();
       },
       (err) => {
         if (alive) dispatch({ t: 'loadError', error: err instanceof Error ? err.message : String(err) });
@@ -380,27 +466,47 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
     return () => {
       alive = false;
     };
-  }, [projectId, storage, fallbackName]);
+  }, [projectId, storage, fallbackName, syncHistory]);
 
-  // 自动保存（防抖）
+  /** 带乐观并发的保存；冲突时进入冲突解决流程，不静默覆盖。 */
+  const doSave = useCallback(
+    async (force = false) => {
+      const doc = docRef.current;
+      if (!doc) return;
+      dispatch({ t: 'saveStatus', status: 'saving' });
+      try {
+        const rev = await storage.save(doc, force ? undefined : revRef.current);
+        revRef.current = rev;
+        dispatch({ t: 'saveStatus', status: 'saved' });
+      } catch (err) {
+        if (err instanceof ConflictError) {
+          const server = await storage.loadWithRev(doc.id).catch(() => null);
+          dispatch({
+            t: 'conflict',
+            info: { currentRev: err.currentRev, serverUpdatedAt: server?.doc.updatedAt ?? '' },
+          });
+        }
+        dispatch({ t: 'saveStatus', status: 'error' });
+      }
+    },
+    [storage],
+  );
+
+  // 自动保存（防抖）；冲突未解决时暂停自动保存，避免反复报错
   const scheduleSave = useCallback(() => {
+    if (conflictRef.current) return;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     dispatch({ t: 'saveStatus', status: 'saving' });
     saveTimer.current = window.setTimeout(() => {
-      const doc = docRef.current;
-      if (!doc) return;
-      storage
-        .save(doc)
-        .then(() => dispatch({ t: 'saveStatus', status: 'saved' }))
-        .catch(() => dispatch({ t: 'saveStatus', status: 'error' }));
+      void doSave(false);
     }, 800);
-  }, [storage]);
+  }, [doSave]);
 
-  const prevGraphRef = useRef<WorkflowGraph | null>(null);
+  const prevDocRef = useRef<ProjectDocument | null>(null);
   useEffect(() => {
-    const g = state.doc?.graph ?? null;
-    if (g && prevGraphRef.current !== g) {
-      prevGraphRef.current = g;
+    const d = state.doc;
+    if (d && prevDocRef.current !== d) {
+      prevDocRef.current = d;
       scheduleSave();
     }
   }, [state.doc, scheduleSave]);
@@ -416,18 +522,26 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
     () => ({
       addNode: (kind: NodeKind, x = 120, y = 120) => {
         if (!isNodeKind(kind)) return;
-        dispatch({ t: 'addNode', kind, x, y });
+        edit({ t: 'addNode', kind, x, y }, '添加节点');
       },
-      moveNode: (id, x, y) => dispatch({ t: 'moveNode', id, x, y }),
-      moveNodes: (moves) => dispatch({ t: 'moveNodes', moves }),
+      moveNode: (id, x, y) => edit({ t: 'moveNode', id, x, y }, '移动节点', dragKeyRef.current),
+      moveNodes: (moves) => edit({ t: 'moveNodes', moves }, '移动节点', dragKeyRef.current),
+      beginDrag: () => {
+        dragKeyRef.current = `drag-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      },
+      endDrag: () => {
+        dragKeyRef.current = null;
+      },
       deleteSelection: () => {
-        if (state.selection.length > 0) dispatch({ t: 'deleteNodes', ids: state.selection });
+        if (state.selection.length > 0) edit({ t: 'deleteNodes', ids: state.selection }, '删除选中');
       },
-      connect: (source, target, sourcePort, targetPort) => dispatch({ t: 'connect', source, target, sourcePort, targetPort }),
-      deleteEdge: (edgeId) => dispatch({ t: 'deleteEdge', edgeId }),
-      updateParam: (id, key, value) => dispatch({ t: 'updateParam', id, key, value }),
-      renameNode: (id, name) => dispatch({ t: 'renameNode', id, name }),
-      toggleBreakpoint: (id) => dispatch({ t: 'toggleBreakpoint', id }),
+      connect: (source, target, sourcePort, targetPort) =>
+        edit({ t: 'connect', source, target, sourcePort, targetPort }, '连线'),
+      deleteEdge: (edgeId) => edit({ t: 'deleteEdge', edgeId }, '删除连线'),
+      updateParam: (id, key, value) =>
+        edit({ t: 'updateParam', id, key, value }, '修改参数', `param:${id}:${key}`, 1500),
+      renameNode: (id, name) => edit({ t: 'renameNode', id, name }, '重命名节点', `rename:${id}`, 1500),
+      toggleBreakpoint: (id) => edit({ t: 'toggleBreakpoint', id }, '切换断点'),
       copySelection: () => {
         const doc = docRef.current;
         if (!doc || state.selection.length === 0) return null;
@@ -438,12 +552,34 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
           .map((e) => ({ source: e.source, target: e.target, sourcePort: e.sourcePort, targetPort: e.targetPort }));
         return { nodes, edges };
       },
-      paste: (nodes, edges) => dispatch({ t: 'paste', nodes, edges }),
+      paste: (nodes, edges) => edit({ t: 'paste', nodes, edges }, '粘贴子图'),
       autoLayout: () => {
         const doc = docRef.current;
         if (!doc) return;
         const next = layoutGraph(doc.graph);
-        dispatch({ t: 'replaceGraph', graph: { ...next, revision: next.revision + 1 } });
+        edit({ t: 'replaceGraph', graph: { ...next, revision: next.revision + 1 } }, '自动布局');
+      },
+      undo: () => {
+        const doc = docRef.current;
+        const h = historyRef.current!;
+        if (!doc || !h.canUndo) return;
+        const prev = h.undo(doc.graph);
+        if (prev) {
+          dragKeyRef.current = null;
+          dispatch({ t: 'replaceGraph', graph: prev });
+          syncHistory();
+        }
+      },
+      redo: () => {
+        const doc = docRef.current;
+        const h = historyRef.current!;
+        if (!doc || !h.canRedo) return;
+        const next = h.redo(doc.graph);
+        if (next) {
+          dragKeyRef.current = null;
+          dispatch({ t: 'replaceGraph', graph: next });
+          syncHistory();
+        }
       },
       select: (ids) => dispatch({ t: 'select', ids }),
       setViewport: (v) => dispatch({ t: 'setViewport', viewport: v }),
@@ -451,16 +587,66 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
         const doc = docRef.current;
         if (doc) dispatch({ t: 'setIssues', issues: canRun(doc.graph).issues });
       },
-      saveNow: async () => {
+      saveNow: () => doSave(false),
+      createSnapshot: (name: string) => {
         const doc = docRef.current;
         if (!doc) return;
-        dispatch({ t: 'saveStatus', status: 'saving' });
-        try {
-          await storage.save(doc);
-          dispatch({ t: 'saveStatus', status: 'saved' });
-        } catch {
-          dispatch({ t: 'saveStatus', status: 'error' });
+        const snap: NamedSnapshot = {
+          id: newSnapshotId(),
+          name: name.trim() || `快照 ${doc.snapshots.length + 1}`,
+          createdAt: new Date().toISOString(),
+          graph: doc.graph,
+        };
+        dispatch({ t: 'setDoc', doc: { ...doc, snapshots: [...doc.snapshots, snap] } });
+      },
+      deleteSnapshot: (snapshotId: string) => {
+        const doc = docRef.current;
+        if (!doc) return;
+        dispatch({ t: 'setDoc', doc: { ...doc, snapshots: doc.snapshots.filter((s) => s.id !== snapshotId) } });
+      },
+      restoreSnapshot: (snapshotId: string) => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const snap = doc.snapshots.find((s) => s.id === snapshotId);
+        if (!snap) return;
+        edit(
+          { t: 'replaceGraph', graph: { ...snap.graph, revision: doc.graph.revision + 1 } },
+          `恢复快照「${snap.name}」`,
+        );
+      },
+      exportProject: () => {
+        const doc = docRef.current;
+        return doc ? serializeExport(doc) : null;
+      },
+      reloadServer: async () => {
+        const rec = await storage.loadWithRev(projectId);
+        if (rec) {
+          revRef.current = rec.rev;
+          historyRef.current!.clear();
+          dispatch({ t: 'loaded', doc: rec.doc });
+          dispatch({ t: 'setIssues', issues: canRun(rec.doc.graph).issues });
+          syncHistory();
         }
+        dispatch({ t: 'conflictClear' });
+      },
+      forceSave: async () => {
+        await doSave(true);
+        dispatch({ t: 'conflictClear' });
+      },
+      saveAsCopy: async (newId: string) => {
+        const doc = docRef.current;
+        if (!doc) return;
+        const copy: ProjectDocument = {
+          ...doc,
+          id: newId,
+          snapshots: doc.snapshots.map((s) => ({ ...s })),
+        };
+        const rev = await storage.save(copy);
+        revRef.current = rev;
+        historyRef.current!.clear();
+        dispatch({ t: 'loaded', doc: copy });
+        syncHistory();
+        dispatch({ t: 'conflictClear' });
       },
       run: async (opts) => {
         const doc = docRef.current;
@@ -485,7 +671,7 @@ export function useEditor(projectId: string, backend?: StorageBackend, fallbackN
       selectRun: (runId) => dispatch({ t: 'selectRun', runId }),
       cancelRun: () => managerRef.current?.cancel(),
     }),
-    [state.running, state.selection, state.debugMode, storage],
+    [state.running, state.selection, state.debugMode, storage, edit, syncHistory, doSave, projectId],
   );
 
   return { state, actions };

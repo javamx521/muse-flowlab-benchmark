@@ -15,6 +15,10 @@ export default defineConfig({
         'src/engine/workerBackend.ts',
         // React hook：由 E2E 覆盖交互；node 环境无渲染器
         'src/store/useEditor.ts',
+        // IndexedDB 与应用单例：node 环境无 indexedDB，由 E2E 在真实浏览器覆盖；
+        // 并发语义由 MemoryBackend 的单元测试覆盖（同一接口）
+        'src/store/indexedDb.ts',
+        'src/store/appStores.ts',
         '**/*.test.ts',
       ],
       thresholds: {

@@ -97,7 +97,38 @@
 1. M2 收尾：文档更新（PROGRESS/DECISIONS/REQUIREMENTS）；本地 commit（不 push）
 2. 进入 M3（数据可靠性）
 
-## M3 数据可靠性（未开始）
+## M3 数据可靠性（已完成，2026-10-02）
+
+### 已完成
+- [x] F06 撤销/重做：`src/store/history.ts`（UndoHistory：100 步上限、coalesceKey 合并拖拽/键入、新编辑清空 redo）；
+      `useEditor.edit()` 包装所有图变更压历史；拖拽会话 beginDrag/endDrag；Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y / Ctrl+S；
+      快照恢复本身可撤销
+- [x] F07 持久化：`src/store/indexedDb.ts`（DB `flowlab-studio`，projects/docs 双 store，rev 乐观并发）；
+      `src/store/appStores.ts` 单例（IndexedDB 优先、不可用降级 localStorage；localStorage 旧数据一次性幂等迁移）；
+      自动保存（800ms 防抖）+ 保存状态指示（已保存/保存中…/保存失败）
+- [x] 工程版本：`DOCUMENT_VERSION=2`（+createdAt、+snapshots）；`src/store/migrate.ts`（v1→v2 迁移、损坏/超版本拒绝）；
+      `src/store/exportImport.ts`（导出/导入 `.flowlab.json`，导入一律创建独立新项目）
+- [x] 快照：`src/store/snapshots.ts`（diffGraphs：节点/连线/参数/数据引用变化，布局差异独立标 layoutOnly）；
+      快照对话框（创建/恢复/删除/与当前比较）
+- [x] 多标签页：`save(doc, expectedRev)` rev 语义（`RevisionedStorageBackend`）；冲突对话框三选项
+      （重新加载 / 强制覆盖 / 另存为副本，Esc 与遮罩点击不可绕过，本地修改保留）
+- [x] 首页：异步注册表、导入工程文件、复制项目（深拷贝独立）、"数据只保存在当前浏览器"提示
+
+### 测试结果（本地，2026-10-02 全绿）
+- `lint` ✅ 0 错误；`typecheck` ✅；`build` ✅
+- `test:unit` ✅ 184 通过（新增 `tests/unit/m3.test.ts` 25 个：history 合并/上限/清空 redo、v1→v2 迁移/损坏拒绝、
+  快照 diff、MemoryBackend rev 并发语义、导出导入往返）；覆盖率 statements 95.3% / branches 82.1% / functions 98.3%（门槛 85/80/85，达标）
+- `test:e2e` ✅ 24/24 通过（15 条 M0–M2 无回归 + 9 条 M3：撤销重做按钮/快捷键拖拽合并/刷新恢复/快照比较恢复/
+  导出导入往返/v1 导入迁移/损坏文件导入/复制项目独立/双标签页冲突→另存为副本）
+- E2E 缺陷分析与修复（均已验证）：
+  1. `StorageBackend.save` 返回类型冲突 → 统一为 `Promise<number>`（返回新 rev）
+  2. `PROJECTS_KEY` 误从 `../lib/projects` 导入 → 改为 `../lib/storageKeys`
+  3. 复制测试 `.first()` 误匹配"副本"卡片（含原文子串）→ 改精确链接文本（测试 bug，产品无问题）
+  4. **Playwright quirk**：`testInfo.outputPath` 目录名含中文测试标题时 `setInputFiles` 静默失败 → 固件改用系统临时目录 ASCII 路径（见 D-024；产品代码无问题，经对照实验证实）
+
+### 下一步
+1. 进入 M4（深层工程能力：F08 增量计算/大数据/性能）
+2. 最终统一推送前不 push（用户已睡，中途零 push 约定）
 ## M4 深层工程能力（未开始）
 ## M5 完整产品体验（未开始）
 ## M6 最终交付（未开始）

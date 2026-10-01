@@ -58,14 +58,19 @@
 
 | 需求 | 状态 | 实现位置 | 测试证据 |
 |---|---|---|---|
-| 全部 | 未实现 | M3 | — |
+| 撤销/重做（100 步、拖拽合并、Ctrl+Z/Y/S） | ✅ M3 完成 | `src/store/history.ts`、`src/store/useEditor.ts` | `tests/unit/m3.test.ts`（合并/上限/清空 redo）；`tests/e2e/m3-flow.spec.ts`（按钮+快捷键+拖拽合并） |
+| 快照可撤销（恢复压入历史） | ✅ M3 完成 | `src/store/useEditor.ts` | E2E：恢复后 Ctrl+Z 回到 2 节点 |
 
 ## F07 持久化、工程版本与多标签页
 
 | 需求 | 状态 | 实现位置 | 测试证据 |
 |---|---|---|---|
-| 项目元数据本地保存 | 部分实现 | `src/lib/projects.ts`（localStorage） | 单元测试（待跑） |
-| IndexedDB/导入导出/迁移/快照/多标签页 | 未实现 | M3 | — |
+| 项目元数据本地保存 | ✅ M3 完成（IndexedDB，localStorage 一次性迁移） | `src/store/indexedDb.ts`、`src/store/appStores.ts` | E2E：刷新恢复；单元测试迁移幂等 |
+| 工程格式 v2 + v1 迁移 + 损坏拒绝 | ✅ M3 完成 | `src/store/migrate.ts`、`src/store/document.ts` | `tests/unit/m3.test.ts`；E2E：v1 导入迁移 / 损坏文件报错且不破坏现有项目 |
+| 导出/导入 `.flowlab.json`（独立新项目） | ✅ M3 完成 | `src/store/exportImport.ts` | E2E：导出→导入往返 |
+| 快照（创建/比较/恢复） | ✅ M3 完成 | `src/store/snapshots.ts` | `tests/unit/m3.test.ts`（diff）；E2E：创建→比较→恢复 |
+| 多标签页 rev 乐观并发 + 冲突三选项 | ✅ M3 完成 | `src/store/document.ts`（rev）、`src/store/useEditor.ts` | `tests/unit/m3.test.ts`（并发语义）；E2E：双标签页冲突→另存为副本 |
+| 复制项目（深拷贝独立） | ✅ M3 完成 | `src/store/indexedDb.ts`、`src/pages/HomePage.tsx` | E2E：副本互不影响 |
 
 ## F08 增量计算、大数据与性能
 

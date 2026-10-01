@@ -109,3 +109,30 @@
 - chart 的 xColumn/yColumn 默认值原为示例值（city/amount），导致新节点校验失败、运行按钮禁用；
   改为空字符串 + placeholder 示例，由用户填写。
 - 状态：已采用。
+
+## D-020 撤销用图快照栈（M3，F06）
+- 撤销/重做直接保存不可变图快照（引用安全由 reducer 不可变保证），而非命令模式；
+  上限 100 步；拖拽/键入用 `coalesceKey` 合并连续编辑；新编辑清空 redo 栈。
+- 状态：已采用。
+
+## D-021 IndexedDB 存储结构（M3，F07）
+- DB 名 `flowlab-studio`；`projects` store 存元数据（keyPath id），`docs` store 存 `{id, rev, doc}`；
+  rev 乐观并发：`save(doc, expectedRev)` 在 rev 不一致时抛 `ConflictError`。
+- 不可用时降级 localStorage（单例 `getBackend()` 按环境选择）。
+- 状态：已采用。
+
+## D-022 工程格式 v2 与迁移（M3，F07）
+- `DOCUMENT_VERSION=2`（新增 `createdAt`、`snapshots`）；v1→v2 自动迁移；
+  损坏/超版本直接拒绝并报错，不静默丢弃；旧 localStorage 数据一次性幂等迁入 IndexedDB。
+- 状态：已采用。
+
+## D-023 多标签页冲突三选项（M3，F07）
+- 保存时 rev 过期 → 冲突对话框（Esc/遮罩不可绕过，本地修改保留）：
+  重新加载（放弃本地）、强制覆盖（显式二次确认）、另存为副本（默认推荐）。
+- 状态：已采用。
+
+## D-024 E2E 上传路径必须全 ASCII（M3，测试教训）
+- 实测 Playwright 在此环境对含中文字符的上传路径 `setInputFiles` 静默失败（change 不触发）；
+  `testInfo.outputPath` 目录名来自中文测试标题，故固件改写系统临时目录 ASCII 路径
+ （`tests/e2e/m3-flow.spec.ts` 的 `asciiFixturePath`）。
+- 状态：已采用（测试约定）。

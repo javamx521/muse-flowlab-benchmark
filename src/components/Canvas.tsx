@@ -38,6 +38,9 @@ interface Props {
   onSelect(ids: string[]): void;
   onMoveNode(id: string, x: number, y: number): void;
   onMoveNodes(moves: { id: string; x: number; y: number }[]): void;
+  /** 拖拽会话起止（F06：一次连续拖拽合并为一条撤销历史）。 */
+  onDragStart(): void;
+  onDragEnd(): void;
   onConnect(source: string, target: string, sourcePort?: string, targetPort?: string): void;
   onDeleteEdge(edgeId: string): void;
   onViewportChange(v: Viewport): void;
@@ -111,6 +114,7 @@ export default function Canvas(props: Props) {
       if (n) orig.set(nid, { ...n.position });
     }
     setDragging({ ids, startWorld: w, orig });
+    props.onDragStart();
   };
 
   const onPortMouseDown = (e: React.MouseEvent, nodeId: string, side: 'in' | 'out', port: string) => {
@@ -172,6 +176,7 @@ export default function Canvas(props: Props) {
       }
     };
     const up = () => {
+      if (dragRef.current) props.onDragEnd();
       setDragging(null);
       setPanning(null);
       setConnecting(null);

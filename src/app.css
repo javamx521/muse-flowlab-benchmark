@@ -433,3 +433,25 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .chart-bar { fill: var(--accent); opacity: 0.85; }
 .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .chart-point { fill: var(--accent); stroke: #fff; stroke-width: 1; }
+
+/* M3：对话框 / 快照 / 冲突 */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.modal {
+  background: var(--bg-panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 12px;
+  padding: 1.25rem; width: min(560px, 100%);
+  max-height: 85vh; overflow: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.modal h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
+.modal .column { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
+.snapshot-list { list-style: none; margin: 0.75rem 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.snapshot-list li { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.75rem; }
+.diff-view { margin-top: 0.5rem; padding: 0.5rem 0.6rem; background: var(--bg); border-radius: 6px; font-size: 0.85rem; }
+.diff-view p { margin: 0.25rem 0; }
+.danger-text { color: var(--danger); }

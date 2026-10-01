@@ -3,7 +3,7 @@
  * 左侧节点面板（按分组）/ 中央画布+小地图 / 右侧检查器+问题 / 底部结果面板 / 顶栏运行与调试控制。
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import Canvas, { NODE_W } from '../components/Canvas';
 import Inspector from '../components/Inspector';
 import DataTableView from '../components/DataTableView';
@@ -11,11 +11,14 @@ import ChartView from '../components/ChartView';
 import { useEditor } from '../store/useEditor';
 import { listNodeDefs, exportTableCsv, getNodeDef } from '../engine/nodes';
 import { APP_VERSION } from '../lib/version';
-import { projectStore } from '../lib/projects';
+import { getProjectStore } from '../store/appStores';
+import type { ProjectMeta } from '../lib/projects';
+import { diffGraphs, isDiffEmpty } from '../store/snapshots';
+import type { NamedSnapshot } from '../store/document';
 import type { NodeInstance, NodeKind, NodeRunStatus } from '../engine/types';
 
-function downloadCsv(filename: string, text: string) {
-  const blob = new Blob(['\uFEFF' + text], { type: 'text/csv;charset=utf-8' });
+function downloadText(filename: string, text: string, mime: string) {
+  const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -24,6 +27,163 @@ function downloadCsv(filename: string, text: string) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+function downloadCsv(filename: string, text: string) {
+  downloadText(filename, '\uFEFF' + text, 'text/csv;charset=utf-8');
+}
+
+/** 快照面板对话框（F07）：创建 / 比较 / 恢复 / 删除。 */
+function SnapshotDialog(props: {
+  snapshots: NamedSnapshot[];
+  currentGraph: import('../engine/types').WorkflowGraph;
+  onCreate(name: string): void;
+  onDelete(id: string): void;
+  onRestore(id: string): void;
+  onClose(): void;
+}) {
+  const [name, setName] = useState('');
+  const [compareId, setCompareId] = useState<string | null>(null);
+  const compareSnap = props.snapshots.find((s) => s.id === compareId) ?? null;
+  const diff = useMemo(
+    () => (compareSnap ? diffGraphs(compareSnap.graph, props.currentGraph) : null),
+    [compareSnap, props.currentGraph],
+  );
+
+  // 焦点管理：打开时聚焦到输入框，Esc 关闭（F09 无障碍）
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') props.onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="modal-overlay" data-testid="snapshot-dialog" role="dialog" aria-modal="true" aria-label="命名快照">
+      <div className="modal">
+        <h2>命名快照</h2>
+        <form
+          className="row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            props.onCreate(name);
+            setName('');
+          }}
+        >
+          <input
+            ref={inputRef}
+            data-testid="snapshot-name"
+            type="text"
+            value={name}
+            maxLength={60}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="快照名称"
+            aria-label="快照名称"
+          />
+          <button type="submit" data-testid="snapshot-create">创建快照</button>
+        </form>
+        {props.snapshots.length === 0 && <p className="muted">还没有快照。</p>}
+        <ul className="snapshot-list">
+          {props.snapshots.map((s) => (
+            <li key={s.id} data-testid={`snapshot-${s.id}`}>
+              <strong>{s.name}</strong>
+              <span className="muted small">
+                {new Date(s.createdAt).toLocaleString('zh-CN', { hour12: false })} · {s.graph.nodes.length} 节点 / {s.graph.edges.length} 连线
+              </span>
+              <div className="row">
+                <button type="button" onClick={() => setCompareId(compareId === s.id ? null : s.id)}>
+                  {compareId === s.id ? '收起比较' : '与当前比较'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm(`恢复到快照「${s.name}」？当前未保存的修改可通过撤销找回。`)) {
+                      props.onRestore(s.id);
+                      props.onClose();
+                    }
+                  }}
+                >
+                  恢复
+                </button>
+                <button
+                  type="button"
+                  className="danger-text"
+                  onClick={() => {
+                    if (window.confirm(`删除快照「${s.name}」？`)) props.onDelete(s.id);
+                  }}
+                >
+                  删除
+                </button>
+              </div>
+              {compareId === s.id && diff && (
+                <div className="diff-view" data-testid="snapshot-diff">
+                  {isDiffEmpty(diff) && <p className="muted">与当前完全一致。</p>}
+                  {diff.layoutOnly && <p className="muted">仅布局（节点位置）有差异。</p>}
+                  {diff.addedNodes.length > 0 && (
+                    <p>新增节点：{diff.addedNodes.map((n) => n.name).join('、')}</p>
+                  )}
+                  {diff.removedNodes.length > 0 && (
+                    <p>删除节点：{diff.removedNodes.map((n) => n.name).join('、')}</p>
+                  )}
+                  {diff.changedNodes.map((c) => (
+                    <p key={c.id}>「{c.name}」：{c.changes.join('；')}</p>
+                  ))}
+                  {(diff.addedEdges.length > 0 || diff.removedEdges.length > 0) && (
+                    <p>连线变化：新增 {diff.addedEdges.length} 条，删除 {diff.removedEdges.length} 条</p>
+                  )}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+        <div className="row">
+          <button type="button" onClick={props.onClose}>关闭</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 多标签页冲突解决对话框（F07）。 */
+function ConflictDialog(props: {
+  serverUpdatedAt: string;
+  onReload(): void;
+  onCopy(): void;
+  onForce(): void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') e.stopPropagation(); // 冲突必须明确选择，不允许 Esc 绕过
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+  return (
+    <div className="modal-overlay" data-testid="conflict-dialog" role="alertdialog" aria-modal="true" aria-label="多标签页冲突">
+      <div className="modal">
+        <h2>检测到多标签页冲突</h2>
+        <p>
+          另一个标签页修改了此项目{props.serverUpdatedAt && <>（对方保存于 {new Date(props.serverUpdatedAt).toLocaleString('zh-CN', { hour12: false })}）</>}。
+          为避免静默覆盖，自动保存已暂停，你的本地修改仍保留在当前页面。
+        </p>
+        <div className="column">
+          <button type="button" data-testid="conflict-reload" onClick={props.onReload}>
+            重新加载对方版本（丢弃本地未保存修改）
+          </button>
+          <button type="button" data-testid="conflict-copy" onClick={props.onCopy}>
+            另存为副本（保留本地全部内容为新项目）
+          </button>
+          <button type="button" data-testid="conflict-force" onClick={props.onForce} className="danger-text">
+            强制覆盖（用本地版本覆盖对方修改）
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** 小地图：全图缩略图 + 视口框。 */
@@ -83,13 +243,30 @@ const CATEGORIES = ['输入', '变换', '输出'] as const;
 
 export default function EditorPage() {
   const { id = '' } = useParams();
-  const meta = projectStore.get(id);
+  const navigate = useNavigate();
+  // 项目元数据改为异步加载（M3：IndexedDB 注册表）
+  const [meta, setMeta] = useState<ProjectMeta | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    getProjectStore()
+      .then((s) => s.get(id))
+      .then((m) => {
+        if (alive) setMeta(m ?? null);
+      })
+      .catch(() => {
+        if (alive) setMeta(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [id]);
   const { state, actions } = useEditor(id, undefined, meta?.name);
   const [tab, setTab] = useState<'output' | 'log'>('output');
   const [resultsOpen, setResultsOpen] = useState(true);
   const [placeSeq, setPlaceSeq] = useState(0);
   /** branch 等多输出节点的查看端口。 */
   const [viewPort, setViewPort] = useState<string | null>(null);
+  const [snapOpen, setSnapOpen] = useState(false);
   const clipboardRef = useRef<ReturnType<typeof actions.copySelection>>(null);
   const canvasWrapRef = useRef<HTMLElement>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
@@ -154,18 +331,29 @@ export default function EditorPage() {
     return () => ro.disconnect();
   }, []);
 
-  // 快捷键：Delete 删除；Ctrl+C / Ctrl+V 复制粘贴
+  // 快捷键：Delete 删除；Ctrl+C / Ctrl+V 复制粘贴；Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y 撤销重做；Ctrl+S 保存
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && state.selection.length > 0) {
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (mod && key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        actions.undo();
+      } else if ((mod && key === 'y') || (mod && e.shiftKey && key === 'z')) {
+        e.preventDefault();
+        actions.redo();
+      } else if (mod && key === 's') {
+        e.preventDefault();
+        void actions.saveNow();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selection.length > 0) {
         e.preventDefault();
         actions.deleteSelection();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && state.selection.length > 0) {
+      } else if (mod && key === 'c' && state.selection.length > 0) {
         e.preventDefault();
         clipboardRef.current = actions.copySelection();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v' && clipboardRef.current) {
+      } else if (mod && key === 'v' && clipboardRef.current) {
         e.preventDefault();
         actions.paste(clipboardRef.current.nodes, clipboardRef.current.edges);
       }
@@ -181,7 +369,7 @@ export default function EditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc?.graph.revision, doc?.graph.nodes.length, doc?.graph.edges.length]);
 
-  if (state.loading) return <div className="page"><p>加载中…</p></div>;
+  if (meta === undefined || state.loading) return <div className="page"><p>加载中…</p></div>;
   if (state.loadError) return <div className="page"><p role="alert">加载失败：{state.loadError}</p></div>;
   if (!meta) {
     return (
@@ -219,6 +407,22 @@ export default function EditorPage() {
           {state.saveStatus === 'idle' && ''}
         </span>
         <span className="muted small">修订 r{graph.revision}</span>
+        <button
+          data-testid="undo-btn"
+          onClick={() => actions.undo()}
+          disabled={!state.canUndo}
+          title="撤销（Ctrl+Z）"
+        >
+          撤销
+        </button>
+        <button
+          data-testid="redo-btn"
+          onClick={() => actions.redo()}
+          disabled={!state.canRedo}
+          title="重做（Ctrl+Shift+Z）"
+        >
+          重做
+        </button>
         <div className="spacer" />
         <label className="debug-toggle" title="调试模式：单并发 + 断点/单步/暂停">
           <input
@@ -284,6 +488,23 @@ export default function EditorPage() {
         >
           问题 {state.issues.length}
         </button>
+        <button
+          data-testid="snapshot-btn"
+          onClick={() => setSnapOpen(true)}
+          title="命名快照：创建 / 比较 / 恢复"
+        >
+          快照
+        </button>
+        <button
+          data-testid="export-btn"
+          onClick={() => {
+            const text = actions.exportProject();
+            if (text) downloadText(`flowlab-${doc.name}.flowlab.json`, text, 'application/json');
+          }}
+          title="导出工程 JSON（含数据与快照，可在新浏览器导入恢复）"
+        >
+          导出
+        </button>
       </header>
 
       <div className="workbench">
@@ -322,6 +543,8 @@ export default function EditorPage() {
             onSelect={actions.select}
             onMoveNode={actions.moveNode}
             onMoveNodes={actions.moveNodes}
+            onDragStart={actions.beginDrag}
+            onDragEnd={actions.endDrag}
             onConnect={actions.connect}
             onDeleteEdge={actions.deleteEdge}
             onViewportChange={actions.setViewport}
@@ -338,6 +561,30 @@ export default function EditorPage() {
           />
         </aside>
       </div>
+
+      {snapOpen && doc && (
+        <SnapshotDialog
+          snapshots={doc.snapshots}
+          currentGraph={graph}
+          onCreate={(name) => actions.createSnapshot(name)}
+          onDelete={(sid) => actions.deleteSnapshot(sid)}
+          onRestore={(sid) => actions.restoreSnapshot(sid)}
+          onClose={() => setSnapOpen(false)}
+        />
+      )}
+      {state.conflict && (
+        <ConflictDialog
+          serverUpdatedAt={state.conflict.serverUpdatedAt}
+          onReload={() => actions.reloadServer()}
+          onCopy={async () => {
+            const store = await getProjectStore();
+            const meta = await store.create(`${doc.name}（本地副本）`);
+            await actions.saveAsCopy(meta.id);
+            navigate(`/project/${meta.id}`);
+          }}
+          onForce={() => actions.forceSave()}
+        />
+      )}
 
       <section className={resultsOpen ? 'results' : 'results collapsed'} aria-label="结果面板">
         <div className="results-tabs">
@@ -445,7 +692,7 @@ export default function EditorPage() {
 
       <footer className="footer">
         <span className="muted small">
-          FlowLab Studio v{APP_VERSION} · 本地运行 · M2 里程碑
+          FlowLab Studio v{APP_VERSION} · 本地运行 · M3 里程碑
         </span>
       </footer>
     </div>
