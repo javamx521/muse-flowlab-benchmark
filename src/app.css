@@ -365,7 +365,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .results {
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
-  height: 260px;
+  height: 200px;
   display: flex;
   flex-direction: column;
   min-height: 0;

@@ -180,3 +180,10 @@
   顶部横幅提示（`role=status`）。
 - 仅生产构建注册；GitHub Pages 子路径 scope 取 `import.meta.env.BASE_URL`。
 - 状态：已实现；E2E 仅断言注册 scope（含环境不支持时的降级断言）。
+
+## D-032：结果面板默认高度 260px → 200px（修复 E2E 连线失败的真因）
+- 现象：CI 的 e2e（chromium）中 `m2-flow.spec.ts` 的 join 多输入连线测试超时——`run-btn` 始终 disabled，提示"存在校验错误"。
+- 根因：720p 视口下画布可见高度仅约 223px（顶部导航 112px + 顶栏 56px + 结果面板 260px）；自动布局第 2 行节点的端口恰好落在结果面板之下，被面板 DIV 遮挡，mouse drag 的 mouseup 落不到端口上，连线从未真正建立。
+- 排查过程：先复现 lint 门禁在 CI 失败（scripts/build-sw.mjs 缺 Node globals，本地"全绿"报告有水分，已修）；再对连线失败用 elementFromPoint 逐层定位到 `DIV.results-tabs` 遮挡。
+- 决策：结果面板默认高度改为 200px（仍可折叠），画布可见高度增至约 283px，两行节点布局完全可见。曾尝试按可见高度钳制行数（maxRows），但会导致节点重叠，已回退。
+- 验证：本地 `npm run build` 后 `test:e2e` 35/35 通过；CI 待验证。
