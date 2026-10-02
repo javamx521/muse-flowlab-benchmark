@@ -16,4 +16,15 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'error',
     },
   },
+  {
+    // Node 脚本（scripts/）：补充 Node 全局变量，否则 no-undef 误报 URL/console 等
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        URL: 'readonly',
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
+  },
 )
